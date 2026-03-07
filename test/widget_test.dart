@@ -5,6 +5,7 @@
 // gestures. You can also use WidgetTester to find child widgets in the widget
 // tree, read text, and verify that the values of widget properties are correct.
 
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:hooplytics/main.dart';
@@ -12,9 +13,9 @@ import 'package:hooplytics/main.dart';
 void main() {
   testWidgets('Counter increments smoke test', (WidgetTester tester) async {
     // Build our app and trigger a frame.
-    await tester.pumpWidget(const HooplyticsApp());
+    await tester.pumpWidget(const HooplyticApp());
 
-    // Verify that the setup screen title exists.
-    expect(find.text('Nowa Sesja'), findsOneWidget);
+    // App should render (splash screen appears first).
+    expect(find.byType(MaterialApp), findsOneWidget);
   });
 }

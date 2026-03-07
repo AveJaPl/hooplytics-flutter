@@ -1,20 +1,29 @@
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
+import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'providers/session_provider.dart';
-import 'screens/session_setup.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'config/supabase_config.dart';
+import 'screens/splash_screen.dart';
 
-void main() {
-  runApp(
-    MultiProvider(
-      providers: [ChangeNotifierProvider(create: (_) => SessionProvider())],
-      child: const HooplyticsApp(),
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  await Supabase.initialize(
+    url: SupabaseConfig.url,
+    anonKey: SupabaseConfig.anonKey,
+  );
+
+  SystemChrome.setSystemUIOverlayStyle(
+    const SystemUiOverlayStyle(
+      statusBarColor: Colors.transparent,
+      statusBarIconBrightness: Brightness.light,
     ),
   );
+  runApp(const HooplyticApp());
 }
 
-class HooplyticsApp extends StatelessWidget {
-  const HooplyticsApp({super.key});
+class HooplyticApp extends StatelessWidget {
+  const HooplyticApp({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -22,28 +31,17 @@ class HooplyticsApp extends StatelessWidget {
       title: 'Hooplytics',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
-        useMaterial3: true,
         brightness: Brightness.dark,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFFFF6D00), // Basketball orange
-          brightness: Brightness.dark,
-          primary: const Color(0xFFFF6D00),
-          secondary: const Color(0xFF2979FF), // Athletic blue
-          surface: const Color(0xFF121212),
+        scaffoldBackgroundColor: const Color(0xFF0A0A0F),
+        colorScheme: const ColorScheme.dark(
+          primary: Color(0xFFFF6B1A),
+          secondary: Color(0xFFFFAA00),
+          surface: Color(0xFF12121A),
         ),
         textTheme: GoogleFonts.outfitTextTheme(ThemeData.dark().textTheme),
-        appBarTheme: AppBarTheme(
-          backgroundColor: Colors.transparent,
-          elevation: 0,
-          centerTitle: true,
-          titleTextStyle: GoogleFonts.outfit(
-            fontSize: 24,
-            fontWeight: FontWeight.bold,
-            color: Colors.white,
-          ),
-        ),
+        useMaterial3: true,
       ),
-      home: const SessionSetupScreen(),
+      home: const SplashScreen(),
     );
   }
 }
