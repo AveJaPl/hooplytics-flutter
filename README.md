@@ -6,7 +6,9 @@ Hooplytics to nowoczesna aplikacja mobilna stworzona dla koszykarzy, którzy chc
 
 ## 🚀 Aktualne Funkcje
 
-- **Konfiguracja Sesji**: Wybierz dystans (np. rzuty wolne, trójki) oraz konkretną pozycję na boisku.
+- **Wizualna Konfiguracja Sesji**: Użytkownik na początku decyduje się na trening oparty na **Zasięgu (Range)** lub **Pozycji (Position)**, wybierając dany obszar z poziomu **graficznego schematu boiska**:
+    - **Pozycja (Position)**: Interaktywne punkty na parkiecie, np. *Left Corner, Wing Corner, Top, Free Throw, Left Elbow*.
+    - **Zasięg (Range)**: Wybór całych stref rzutowych, np. *Layup, Close Shot, Mid Range, Three Point*.
 - **Inteligentne Śledzenie**:
     - **Ręczne wprowadzanie**: Intuicyjne przyciski +/- do szybkiego zapisu trafień i pudła.
     - **Sterowanie Głosowe (PL)**: Tryb "hands-free" – mów "punkt" lub "pudło" podczas rzutu, a aplikacja sama zaktualizuje statystyki.
@@ -53,8 +55,10 @@ W kolejnych etapach planujemy dodać:
 - Tryby treningowe (np. "Around the World", "Pressure Free Throws").
 - System poziomów i odznak za regularne treningi.
 
-### 3. Synchronizacja w Chmurze
-- Integracja z Firebase w celu synchronizacji danych między wieloma urządzeniami.
+### 3. Ekosystem Mobilny, Chmura i Uwierzytelnianie
+- **Dystrybucja**: Docelowe wydanie aplikacji na platformach **App Store** oraz **Google Play**.
+- **System Kont i Logowania**: Wdrożenie autoryzacji użytkowników, aby umożliwić swobodne przełączanie się między urządzeniami.
+- **Baza w Chmurze (Supabase)**: Migracja kluczowych danych z lokalnej pamięci (SQLite) do nowoczesnego backendu (np. **Supabase**), zapewniająca pełną synchronizację sesji rzutowych w chmurze.
 - Rankingi (Leaderboards) – porównuj swoje wyniki ze znajomymi.
 
 ### 4. Analiza Wideo (AI)
