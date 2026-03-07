@@ -28,7 +28,6 @@ class _ShootingSessionScreenState extends State<ShootingSessionScreen> {
   }
 
   void _handleVoiceCommand(String text) {
-    print('Recognized: $text');
     if (text.contains('punkt') ||
         text.contains('trafiony') ||
         text.contains('trafienie')) {
@@ -45,8 +44,9 @@ class _ShootingSessionScreenState extends State<ShootingSessionScreen> {
     final sessionProvider = context.watch<SessionProvider>();
     final session = sessionProvider.currentSession;
 
-    if (session == null)
+    if (session == null) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
 
     return Scaffold(
       appBar: AppBar(
@@ -110,7 +110,7 @@ class _ShootingSessionScreenState extends State<ShootingSessionScreen> {
     return Container(
       padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.05),
+        color: Colors.white.withValues(alpha: 0.05),
         borderRadius: const BorderRadius.vertical(top: Radius.circular(32)),
       ),
       child: Column(
@@ -151,8 +151,8 @@ class _ShootingSessionScreenState extends State<ShootingSessionScreen> {
       onPressed: () => provider.addShot(isMake),
       style: ElevatedButton.styleFrom(
         backgroundColor: isMake
-            ? Colors.green.withOpacity(0.2)
-            : Colors.red.withOpacity(0.2),
+            ? Colors.green.withValues(alpha: 0.2)
+            : Colors.red.withValues(alpha: 0.2),
         foregroundColor: isMake ? Colors.green : Colors.red,
         padding: const EdgeInsets.symmetric(vertical: 24),
         shape: RoundedRectangleBorder(
@@ -187,7 +187,7 @@ class _ShootingSessionScreenState extends State<ShootingSessionScreen> {
                   BoxShadow(
                     color: Theme.of(
                       context,
-                    ).colorScheme.primary.withOpacity(0.5),
+                    ).colorScheme.primary.withValues(alpha: 0.5),
                     blurRadius: 20,
                     spreadRadius: 5,
                   ),
@@ -214,7 +214,7 @@ class _ShootingSessionScreenState extends State<ShootingSessionScreen> {
             : 'Inicjalizacja mikrofonu...',
         style: TextStyle(
           color: _isSpeechInitialized
-              ? Colors.green.withOpacity(0.7)
+              ? Colors.green.withValues(alpha: 0.7)
               : Colors.orange,
         ),
       ),

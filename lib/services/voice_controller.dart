@@ -13,8 +13,8 @@ class VoiceController {
 
     if (status.isGranted) {
       _isAvailable = await _speech.initialize(
-        onStatus: (status) => print('Speech status: $status'),
-        onError: (error) => print('Speech error: $error'),
+        onStatus: (status) {},
+        onError: (error) {},
       );
     }
     return _isAvailable;

@@ -29,7 +29,7 @@ class HooplyticsApp extends StatelessWidget {
           brightness: Brightness.dark,
           primary: const Color(0xFFFF6D00),
           secondary: const Color(0xFF2979FF), // Athletic blue
-          background: const Color(0xFF121212),
+          surface: const Color(0xFF121212),
         ),
         textTheme: GoogleFonts.outfitTextTheme(ThemeData.dark().textTheme),
         appBarTheme: AppBarTheme(
