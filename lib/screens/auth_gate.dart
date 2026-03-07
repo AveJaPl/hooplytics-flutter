@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import '../main.dart';
 import 'auth_screen.dart';
 import 'dashboard_screen.dart';
 
@@ -13,14 +14,11 @@ class AuthGate extends StatelessWidget {
     return StreamBuilder<AuthState>(
       stream: Supabase.instance.client.auth.onAuthStateChange,
       builder: (context, snapshot) {
-        // While waiting for first auth event, show loading
         if (!snapshot.hasData) {
-          return const Scaffold(
-            backgroundColor: Color(0xFF0A0A0F),
-            body: Center(
-              child: CircularProgressIndicator(
-                color: Color(0xFFFF6B1A),
-              ),
+          return Scaffold(
+            backgroundColor: AppColors.bg,
+            body: const Center(
+              child: CircularProgressIndicator(color: AppColors.gold),
             ),
           );
         }
