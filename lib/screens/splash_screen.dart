@@ -269,18 +269,17 @@ class _SplashBgPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     // Faint center glow
     final glow = Paint()
-      ..shader =
-          RadialGradient(
-            colors: [
-              AppColors.gold.withValues(alpha: 0.06),
-              Colors.transparent,
-            ],
-          ).createShader(
-            Rect.fromCircle(
-              center: Offset(size.width / 2, size.height / 2),
-              radius: size.width * 0.55,
-            ),
-          );
+      ..shader = RadialGradient(
+        colors: [
+          AppColors.gold.withValues(alpha: 0.06),
+          Colors.transparent,
+        ],
+      ).createShader(
+        Rect.fromCircle(
+          center: Offset(size.width / 2, size.height / 2),
+          radius: size.width * 0.55,
+        ),
+      );
     canvas.drawRect(Rect.fromLTWH(0, 0, size.width, size.height), glow);
 
     // Corner accent lines

@@ -2,6 +2,13 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import '../main.dart';
 import '../services/auth_service.dart';
+import 'session_setup_screen.dart';
+import 'stats_screen.dart';
+import 'profile_screen.dart';
+import 'train_screen.dart';
+import 'manual_entry_screen.dart';
+import 'session_detail_screen.dart';
+import 'history_screen.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -21,11 +28,95 @@ class _DashboardScreenState extends State<DashboardScreen>
   final _authService = AuthService();
 
   // ── Sample data ──
-  final _sessions = const [
-    _Session('Wing Corner', 'Today · 6:30 PM', 22, 30, AppColors.gold),
-    _Session('Three Point', 'Tuesday · 7:00 PM', 14, 25, AppColors.blue),
-    _Session('Mid Range', 'Monday · 5:45 PM', 18, 22, AppColors.green),
-    _Session('Free Throw', 'Sunday · 8:00 AM', 28, 30, AppColors.green),
+  final _sessions = [
+    HoopSession(
+      id: 'right_wing',
+      mode: SessionMode.position,
+      zone: 'Right Wing',
+      dateLabel: 'Today · 6:30 PM',
+      date: DateTime.now(),
+      made: 22,
+      attempts: 30,
+      color: AppColors.gold,
+      isLive: true,
+      swishPct: 45,
+      maxStreak: 8,
+      globalAvgPct: 62,
+      shotHistory: const [
+        true,
+        true,
+        false,
+        true,
+        true,
+        true,
+        false,
+        true,
+        true,
+        true,
+        true,
+        true,
+        false,
+        true,
+        true
+      ],
+    ),
+    HoopSession(
+      id: 'three_pt',
+      mode: SessionMode.range,
+      zone: 'Three Point',
+      dateLabel: 'Tuesday · 7:00 PM',
+      date: DateTime.now().subtract(const Duration(days: 1)),
+      made: 14,
+      attempts: 25,
+      color: AppColors.blue,
+      isLive: false,
+      swishPct: 38,
+      globalAvgPct: 42,
+    ),
+    HoopSession(
+      id: 'mid',
+      mode: SessionMode.range,
+      zone: 'Mid Range',
+      dateLabel: 'Monday · 5:45 PM',
+      date: DateTime.now().subtract(const Duration(days: 2)),
+      made: 18,
+      attempts: 22,
+      color: AppColors.green,
+      isLive: true,
+      swishPct: 50,
+      maxStreak: 12,
+      globalAvgPct: 55,
+      shotHistory: const [
+        true,
+        false,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        false,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true
+      ],
+    ),
+    HoopSession(
+      id: 'free_throw',
+      mode: SessionMode.position,
+      zone: 'Free Throw',
+      dateLabel: 'Sunday · 8:00 AM',
+      date: DateTime.now().subtract(const Duration(days: 3)),
+      made: 28,
+      attempts: 30,
+      color: AppColors.green,
+      isLive: false,
+      swishPct: 60,
+      globalAvgPct: 75,
+    ),
   ];
 
   final _weekData = const [54.0, 61.0, 68.0, 59.0, 76.0, 71.0, 80.0];
@@ -75,50 +166,75 @@ class _DashboardScreenState extends State<DashboardScreen>
                 offset: Offset(0, slide.value),
                 child: child,
               ),
-              child: Column(
-                children: [
-                  _buildTopBar(),
-                  Expanded(
-                    child: SingleChildScrollView(
-                      physics: const BouncingScrollPhysics(),
-                      padding: const EdgeInsets.only(bottom: 100),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const SizedBox(height: 28),
-                          _buildHeroCard(),
-                          const SizedBox(height: 28),
-                          _buildSectionLabel('THIS WEEK', padding: true),
-                          const SizedBox(height: 14),
-                          _buildWeekChart(),
-                          const SizedBox(height: 28),
-                          _buildSectionLabel('QUICK START', padding: true),
-                          const SizedBox(height: 14),
-                          _buildQuickStart(),
-                          const SizedBox(height: 28),
-                          _buildSectionLabel(
-                            'RECENT SESSIONS',
-                            header: true,
-                            padding: true,
-                          ),
-                          const SizedBox(height: 14),
-                          _buildSessionList(),
-                          const SizedBox(height: 28),
-                          _buildSectionLabel('SHOT ZONES', padding: true),
-                          const SizedBox(height: 14),
-                          _buildZoneGrid(),
-                          const SizedBox(height: 28),
-                        ],
-                      ),
-                    ),
-                  ),
-                ],
-              ),
+              child: _buildCurrentTab(),
             ),
           ),
           Positioned(bottom: 0, left: 0, right: 0, child: _buildNav()),
         ],
       ),
+    );
+  }
+
+  // ── Tab Routing ─────────────────────────────────────────────────────────────
+
+  Widget _buildCurrentTab() {
+    switch (_navIndex) {
+      case 0:
+        return _buildHomeTab();
+      case 1:
+        return const TrainScreen();
+      case 2:
+        return const StatsScreen();
+      case 3:
+        return const HistoryScreen();
+      case 4:
+        return const ProfileScreen();
+      default:
+        return _buildHomeTab();
+    }
+  }
+
+  // ── Home Tab ────────────────────────────────────────────────────────────────
+
+  Widget _buildHomeTab() {
+    return Column(
+      children: [
+        _buildTopBar(),
+        Expanded(
+          child: SingleChildScrollView(
+            physics: const BouncingScrollPhysics(),
+            padding: const EdgeInsets.only(bottom: 100),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const SizedBox(height: 28),
+                _buildHeroCard(),
+                const SizedBox(height: 28),
+                _buildSectionLabel('THIS WEEK', padding: true),
+                const SizedBox(height: 14),
+                _buildWeekChart(),
+                const SizedBox(height: 28),
+                _buildSectionLabel('QUICK START', padding: true),
+                const SizedBox(height: 14),
+                _buildQuickStart(),
+                const SizedBox(height: 28),
+                _buildSectionLabel(
+                  'RECENT SESSIONS',
+                  header: true,
+                  padding: true,
+                ),
+                const SizedBox(height: 14),
+                _buildSessionList(),
+                const SizedBox(height: 28),
+                _buildSectionLabel('SHOT ZONES', padding: true),
+                const SizedBox(height: 14),
+                _buildZoneGrid(),
+                const SizedBox(height: 28),
+              ],
+            ),
+          ),
+        ),
+      ],
     );
   }
 
@@ -135,11 +251,16 @@ class _DashboardScreenState extends State<DashboardScreen>
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Good evening',
-                  style: AppText.ui(13, color: AppColors.text2),
+                  'GOOD EVENING',
+                  style: AppText.ui(
+                    10,
+                    color: AppColors.text3,
+                    letterSpacing: 1.8,
+                    weight: FontWeight.w700,
+                  ),
                 ),
                 const SizedBox(height: 2),
-                Text(_userName, style: AppText.ui(20, weight: FontWeight.w700)),
+                Text(_userName, style: AppText.ui(24, weight: FontWeight.w800)),
               ],
             ),
             const Spacer(),
@@ -286,7 +407,7 @@ class _DashboardScreenState extends State<DashboardScreen>
                     ],
                   ),
                 ),
-                _RingChart(value: 0.73, size: 84),
+                const _RingChart(value: 0.73, size: 84),
               ],
             ),
             const SizedBox(height: 24),
@@ -344,18 +465,32 @@ class _DashboardScreenState extends State<DashboardScreen>
         Icons.add_rounded,
         AppColors.gold,
         AppColors.goldSoft,
+        onTap: () => Navigator.of(context).push(
+          PageRouteBuilder(
+            pageBuilder: (_, __, ___) => const SessionSetupScreen(),
+            transitionDuration: const Duration(milliseconds: 400),
+            transitionsBuilder: (_, a, __, child) => FadeTransition(
+              opacity: CurvedAnimation(parent: a, curve: Curves.easeOut),
+              child: SlideTransition(
+                position: Tween(
+                  begin: const Offset(0, 0.04),
+                  end: Offset.zero,
+                ).animate(
+                    CurvedAnimation(parent: a, curve: Curves.easeOutCubic)),
+                child: child,
+              ),
+            ),
+          ),
+        ),
       ),
       _QCard(
-        'VOICE MODE',
-        Icons.mic_none_rounded,
+        'MANUAL ENTRY',
+        Icons.edit_note_rounded,
         AppColors.blue,
         AppColors.blueSoft,
-      ),
-      _QCard(
-        'CHALLENGES',
-        Icons.emoji_events_outlined,
-        AppColors.green,
-        AppColors.greenSoft,
+        onTap: () => Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => const ManualEntryScreen()),
+        ),
       ),
     ];
     return SizedBox(
@@ -365,7 +500,10 @@ class _DashboardScreenState extends State<DashboardScreen>
         padding: const EdgeInsets.symmetric(horizontal: 24),
         separatorBuilder: (_, __) => const SizedBox(width: 12),
         itemCount: cards.length,
-        itemBuilder: (_, i) => _QuickCard(card: cards[i]),
+        itemBuilder: (_, i) => _QuickCard(
+          card: cards[i],
+          width: MediaQuery.of(context).size.width / 2 - 30,
+        ),
       ),
     );
   }
@@ -389,12 +527,12 @@ class _DashboardScreenState extends State<DashboardScreen>
 
   Widget _buildZoneGrid() {
     final zones = [
-      _Zone('Corner 3', '84%', AppColors.green),
-      _Zone('Wing 3', '61%', AppColors.gold),
-      _Zone('Mid Range', '73%', AppColors.gold),
-      _Zone('Elbow', '68%', AppColors.gold),
-      _Zone('Free Throw', '93%', AppColors.green),
-      _Zone('Layup', '88%', AppColors.green),
+      const _Zone('Corner 3', '84%', AppColors.green),
+      const _Zone('Wing 3', '61%', AppColors.gold),
+      const _Zone('Mid Range', '73%', AppColors.gold),
+      const _Zone('Elbow', '68%', AppColors.gold),
+      const _Zone('Free Throw', '93%', AppColors.green),
+      const _Zone('Layup', '88%', AppColors.green),
     ];
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 24),
@@ -417,14 +555,15 @@ class _DashboardScreenState extends State<DashboardScreen>
 
   Widget _buildNav() {
     final items = [
-      _Nav(Icons.home_outlined, Icons.home_rounded, 'Home'),
-      _Nav(
+      const _Nav(Icons.home_outlined, Icons.home_rounded, 'Home'),
+      const _Nav(
         Icons.sports_basketball_outlined,
         Icons.sports_basketball_rounded,
         'Train',
       ),
-      _Nav(Icons.show_chart_rounded, Icons.show_chart_rounded, 'Stats'),
-      _Nav(Icons.person_outline_rounded, Icons.person_rounded, 'Profile'),
+      const _Nav(Icons.show_chart_rounded, Icons.show_chart_rounded, 'Stats'),
+      const _Nav(Icons.history_rounded, Icons.history_rounded, 'History'),
+      const _Nav(Icons.person_outline_rounded, Icons.person_rounded, 'Profile'),
     ];
 
     return Container(
@@ -497,11 +636,12 @@ class _DashboardScreenState extends State<DashboardScreen>
         ],
       ],
     );
-    if (padding)
+    if (padding) {
       content = Padding(
         padding: const EdgeInsets.symmetric(horizontal: 24),
         child: content,
       );
+    }
     return content;
   }
 }
@@ -661,108 +801,134 @@ class _BarChart extends StatelessWidget {
 
 class _QuickCard extends StatelessWidget {
   final _QCard card;
-  const _QuickCard({required this.card});
+  final double width;
+  const _QuickCard({required this.card, this.width = 140});
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: 140,
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: card.bgColor,
-        border: Border.all(color: card.accentColor.withValues(alpha: 0.25)),
-        borderRadius: BorderRadius.circular(16),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(card.icon, color: card.accentColor, size: 22),
-          const Spacer(),
-          Text(
-            card.label,
-            style: AppText.ui(
-              11,
-              weight: FontWeight.w700,
-              color: card.accentColor,
-              letterSpacing: 0.4,
+    return GestureDetector(
+      onTap: card.onTap,
+      child: Container(
+        width: width,
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: card.bgColor,
+          border: Border.all(color: card.accentColor.withValues(alpha: 0.25)),
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(card.icon, color: card.accentColor, size: 22),
+            const Spacer(),
+            Text(
+              card.label,
+              style: AppText.ui(
+                11,
+                weight: FontWeight.w700,
+                color: card.accentColor,
+                letterSpacing: 0.4,
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
 }
 
 class _SessionRow extends StatelessWidget {
-  final _Session session;
+  final HoopSession session;
   const _SessionRow({required this.session});
 
   @override
   Widget build(BuildContext context) {
     final pct = (session.made / session.attempts * 100).round();
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        border: Border.all(color: AppColors.border),
-        borderRadius: BorderRadius.circular(14),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 4,
-            height: 42,
-            decoration: BoxDecoration(
-              color: session.color,
-              borderRadius: BorderRadius.circular(2),
-            ),
+    return GestureDetector(
+      onTap: () {
+        Navigator.of(context).push(PageRouteBuilder(
+          transitionDuration: const Duration(milliseconds: 600),
+          reverseTransitionDuration: const Duration(milliseconds: 500),
+          pageBuilder: (_, animation, __) => SessionDetailScreen(
+            session: session,
+            animation: animation,
           ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  session.zone,
-                  style: AppText.ui(14, weight: FontWeight.w600),
-                ),
-                const SizedBox(height: 3),
-                Text(
-                  session.dateLabel,
-                  style: AppText.ui(12, color: AppColors.text3),
-                ),
-                const SizedBox(height: 10),
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(2),
-                  child: LinearProgressIndicator(
-                    value: session.made / session.attempts,
-                    backgroundColor: AppColors.borderSub,
-                    valueColor: AlwaysStoppedAnimation(session.color),
-                    minHeight: 2,
+          transitionsBuilder: (_, a, __, child) => FadeTransition(
+            opacity: CurvedAnimation(parent: a, curve: Curves.easeOut),
+            child: child,
+          ),
+        ));
+      },
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: AppColors.surface,
+          border: Border.all(color: AppColors.border),
+          borderRadius: BorderRadius.circular(14),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 4,
+              height: 42,
+              decoration: BoxDecoration(
+                color: session.color,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    session.zone,
+                    style: AppText.ui(14, weight: FontWeight.w600),
                   ),
+                  const SizedBox(height: 3),
+                  Text(
+                    session.dateLabel,
+                    style: AppText.ui(12, color: AppColors.text3),
+                  ),
+                  const SizedBox(height: 10),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(2),
+                    child: LinearProgressIndicator(
+                      value: session.made / session.attempts,
+                      backgroundColor: AppColors.borderSub,
+                      valueColor: AlwaysStoppedAnimation(session.color),
+                      minHeight: 2,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 20),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Hero(
+                  tag: 'session_pct_${session.dateLabel}', // unique tag
+                  child: Material(
+                    color: Colors.transparent,
+                    child: Text(
+                      '$pct%',
+                      style: AppText.ui(
+                        18,
+                        weight: FontWeight.w700,
+                        color: session.color,
+                      ),
+                    ),
+                  ),
+                ),
+                Text(
+                  '${session.made}/${session.attempts}',
+                  style: AppText.ui(11, color: AppColors.text3),
                 ),
               ],
             ),
-          ),
-          const SizedBox(width: 20),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Text(
-                '$pct%',
-                style: AppText.ui(
-                  18,
-                  weight: FontWeight.w700,
-                  color: session.color,
-                ),
-              ),
-              Text(
-                '${session.made}/${session.attempts}',
-                style: AppText.ui(11, color: AppColors.text3),
-              ),
-            ],
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -804,24 +970,13 @@ class _ZoneTile extends StatelessWidget {
 
 // ── Data Models ───────────────────────────────────────────────────────────────
 
-class _Session {
-  final String zone, dateLabel;
-  final int made, attempts;
-  final Color color;
-  const _Session(
-    this.zone,
-    this.dateLabel,
-    this.made,
-    this.attempts,
-    this.color,
-  );
-}
-
 class _QCard {
   final String label;
   final IconData icon;
   final Color accentColor, bgColor;
-  const _QCard(this.label, this.icon, this.accentColor, this.bgColor);
+  final VoidCallback? onTap;
+  const _QCard(this.label, this.icon, this.accentColor, this.bgColor,
+      {this.onTap});
 }
 
 class _Zone {

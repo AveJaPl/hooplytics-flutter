@@ -122,23 +122,11 @@ class _AuthScreenState extends State<AuthScreen>
                     const SizedBox(height: 52),
                     _buildTabRow(),
                     const SizedBox(height: 36),
-                    AnimatedSwitcher(
-                      duration: const Duration(milliseconds: 260),
-                      transitionBuilder: (child, anim) =>
-                          FadeTransition(opacity: anim, child: child),
-                      child: _isLogin
-                          ? _LoginForm(
-                              key: const ValueKey('login'),
-                              onSuccess: _goToDashboard,
-                              onError: _showError,
-                              onInfo: _showInfo,
-                            )
-                          : _RegisterForm(
-                              key: const ValueKey('register'),
-                              onSuccess: _goToDashboard,
-                              onError: _showError,
-                              onInfo: _showInfo,
-                            ),
+                    _AuthForm(
+                      isLogin: _isLogin,
+                      onSuccess: _goToDashboard,
+                      onError: _showError,
+                      onInfo: _showInfo,
                     ),
                     const SizedBox(height: 40),
                     _buildDivider(),
@@ -172,16 +160,24 @@ class _AuthScreenState extends State<AuthScreen>
           ),
         ),
         const SizedBox(height: 28),
-        Text(
-          _isLogin ? 'Welcome\nback.' : 'Join\nthe game.',
-          style: AppText.display(44, color: AppColors.text1),
-        ),
-        const SizedBox(height: 10),
-        Text(
-          _isLogin
-              ? 'Sign in to track your progress.'
-              : 'Create an account to get started.',
-          style: AppText.ui(15, color: AppColors.text2),
+        SizedBox(
+          height: 120, // Mantain fixed height to prevent jumping
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                _isLogin ? 'Welcome\nback.' : 'Join\nthe game.',
+                style: AppText.display(44, color: AppColors.text1),
+              ),
+              const SizedBox(height: 10),
+              Text(
+                _isLogin
+                    ? 'Sign in to track your progress.'
+                    : 'Create an account to get started.',
+                style: AppText.ui(15, color: AppColors.text2),
+              ),
+            ],
+          ),
         ),
       ],
     );
@@ -291,31 +287,54 @@ class _TabButton extends StatelessWidget {
   }
 }
 
-// ─── Login Form ───────────────────────────────────────────────────────────────
+// ─── Unified Auth Form ─────────────────────────────────────────────────────────
 
-class _LoginForm extends StatefulWidget {
+class _AuthForm extends StatefulWidget {
+  final bool isLogin;
   final VoidCallback onSuccess;
   final void Function(String) onError;
   final void Function(String) onInfo;
-  const _LoginForm({
-    super.key,
+
+  const _AuthForm({
+    required this.isLogin,
     required this.onSuccess,
     required this.onError,
     required this.onInfo,
   });
+
   @override
-  State<_LoginForm> createState() => _LoginFormState();
+  State<_AuthForm> createState() => _AuthFormState();
 }
 
-class _LoginFormState extends State<_LoginForm> {
+class _AuthFormState extends State<_AuthForm> {
+  final _nameCtrl = TextEditingController();
   final _emailCtrl = TextEditingController();
   final _passwordCtrl = TextEditingController();
   bool _obscure = true;
   bool _loading = false;
+  PasswordStrength _strength = const PasswordStrength(
+    level: PasswordStrengthLevel.none,
+    score: 0,
+  );
   final _authService = AuthService();
 
   @override
+  void initState() {
+    super.initState();
+    _passwordCtrl.addListener(_updateStrength);
+  }
+
+  void _updateStrength() {
+    if (mounted) {
+      setState(() {
+        _strength = PasswordStrength.evaluate(_passwordCtrl.text);
+      });
+    }
+  }
+
+  @override
   void dispose() {
+    _nameCtrl.dispose();
     _emailCtrl.dispose();
     _passwordCtrl.dispose();
     super.dispose();
@@ -324,16 +343,30 @@ class _LoginFormState extends State<_LoginForm> {
   Future<void> _submit() async {
     final email = _emailCtrl.text.trim();
     final password = _passwordCtrl.text;
+    final name = _nameCtrl.text.trim();
 
-    if (email.isEmpty || password.isEmpty) {
+    if (email.isEmpty ||
+        password.isEmpty ||
+        (!widget.isLogin && name.isEmpty)) {
       widget.onError('Wypełnij wszystkie pola.');
+      return;
+    }
+
+    if (!widget.isLogin && _strength.score < 2) {
+      widget
+          .onError('Hasło za słabe. Min. 6 znaków + wielka litera lub cyfra.');
       return;
     }
 
     setState(() => _loading = true);
     try {
-      await _authService.signInWithEmail(email, password);
-      widget.onSuccess();
+      if (widget.isLogin) {
+        await _authService.signInWithEmail(email, password);
+        widget.onSuccess();
+      } else {
+        await _authService.signUpWithEmail(email, password, name);
+        widget.onSuccess(); // Redirect immediately
+      }
     } on AuthException catch (e) {
       widget.onError(e.message);
     } catch (_) {
@@ -364,6 +397,25 @@ class _LoginFormState extends State<_LoginForm> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        // Name Field (Register only)
+        AnimatedSize(
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeInOut,
+          child: !widget.isLogin
+              ? Column(
+                  children: [
+                    _Field(
+                      label: 'FULL NAME',
+                      hint: 'Jan Kowalski',
+                      controller: _nameCtrl,
+                    ),
+                    const SizedBox(height: 20),
+                  ],
+                )
+              : const SizedBox.shrink(),
+        ),
+
+        // Email Field (Common)
         _Field(
           label: 'EMAIL',
           hint: 'you@example.com',
@@ -371,6 +423,8 @@ class _LoginFormState extends State<_LoginForm> {
           controller: _emailCtrl,
         ),
         const SizedBox(height: 20),
+
+        // Password Field (Common)
         _Field(
           label: 'PASSWORD',
           hint: '••••••••••',
@@ -387,139 +441,56 @@ class _LoginFormState extends State<_LoginForm> {
             ),
           ),
         ),
-        const SizedBox(height: 14),
-        Align(
-          alignment: Alignment.centerRight,
-          child: GestureDetector(
-            onTap: _handleForgotPassword,
-            child: Text(
-              'Forgot password?',
-              style: AppText.ui(
-                13,
-                color: AppColors.gold,
-                weight: FontWeight.w500,
-              ),
-            ),
-          ),
+
+        // Forgot Password (Login only)
+        AnimatedSize(
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeInOut,
+          child: widget.isLogin
+              ? Column(
+                  children: [
+                    const SizedBox(height: 14),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: GestureDetector(
+                        onTap: _handleForgotPassword,
+                        child: Text(
+                          'Forgot password?',
+                          style: AppText.ui(
+                            13,
+                            color: AppColors.gold,
+                            weight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                )
+              : const SizedBox.shrink(),
         ),
+
+        // Password Strength (Register only)
+        AnimatedSize(
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeInOut,
+          child: !widget.isLogin
+              ? Column(
+                  children: [
+                    const SizedBox(height: 12),
+                    _PasswordStrengthBar(strength: _strength),
+                  ],
+                )
+              : const SizedBox.shrink(),
+        ),
+
         const SizedBox(height: 32),
-        _PrimaryBtn(label: 'Sign In', loading: _loading, onTap: _submit),
-      ],
-    );
-  }
-}
 
-// ─── Register Form ────────────────────────────────────────────────────────────
-
-class _RegisterForm extends StatefulWidget {
-  final VoidCallback onSuccess;
-  final void Function(String) onError;
-  final void Function(String) onInfo;
-  const _RegisterForm({
-    super.key,
-    required this.onSuccess,
-    required this.onError,
-    required this.onInfo,
-  });
-  @override
-  State<_RegisterForm> createState() => _RegisterFormState();
-}
-
-class _RegisterFormState extends State<_RegisterForm> {
-  final _nameCtrl = TextEditingController();
-  final _emailCtrl = TextEditingController();
-  final _passwordCtrl = TextEditingController();
-  bool _obscure = true;
-  bool _loading = false;
-  PasswordStrength _strength = const PasswordStrength(
-    level: PasswordStrengthLevel.none,
-    score: 0,
-  );
-  final _authService = AuthService();
-
-  @override
-  void initState() {
-    super.initState();
-    _passwordCtrl.addListener(_updateStrength);
-  }
-
-  void _updateStrength() {
-    setState(() {
-      _strength = PasswordStrength.evaluate(_passwordCtrl.text);
-    });
-  }
-
-  @override
-  void dispose() {
-    _nameCtrl.dispose();
-    _emailCtrl.dispose();
-    _passwordCtrl.dispose();
-    super.dispose();
-  }
-
-  Future<void> _submit() async {
-    final name = _nameCtrl.text.trim();
-    final email = _emailCtrl.text.trim();
-    final password = _passwordCtrl.text;
-
-    if (name.isEmpty || email.isEmpty || password.isEmpty) {
-      widget.onError('Wypełnij wszystkie pola.');
-      return;
-    }
-
-    if (_strength.score < 2) {
-      widget.onError(
-        'Hasło za słabe. Min. 6 znaków + wielka litera lub cyfra.',
-      );
-      return;
-    }
-
-    setState(() => _loading = true);
-    try {
-      await _authService.signUpWithEmail(email, password, name);
-      widget.onInfo('Konto utworzone! Sprawdź email.');
-    } on AuthException catch (e) {
-      widget.onError(e.message);
-    } catch (_) {
-      widget.onError('Wystąpił błąd. Spróbuj ponownie.');
-    } finally {
-      if (mounted) setState(() => _loading = false);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      children: [
-        _Field(label: 'FULL NAME', hint: 'Jan Kowalski', controller: _nameCtrl),
-        const SizedBox(height: 20),
-        _Field(
-          label: 'EMAIL',
-          hint: 'you@example.com',
-          type: TextInputType.emailAddress,
-          controller: _emailCtrl,
+        // Action Button
+        _PrimaryBtn(
+          label: widget.isLogin ? 'Sign In' : 'Create Account',
+          loading: _loading,
+          onTap: _submit,
         ),
-        const SizedBox(height: 20),
-        _Field(
-          label: 'PASSWORD',
-          hint: '••••••••••',
-          obscure: _obscure,
-          controller: _passwordCtrl,
-          trailing: GestureDetector(
-            onTap: () => setState(() => _obscure = !_obscure),
-            child: Icon(
-              _obscure
-                  ? Icons.visibility_off_outlined
-                  : Icons.visibility_outlined,
-              size: 18,
-              color: AppColors.text3,
-            ),
-          ),
-        ),
-        const SizedBox(height: 12),
-        _PasswordStrengthBar(strength: _strength),
-        const SizedBox(height: 32),
-        _PrimaryBtn(label: 'Create Account', loading: _loading, onTap: _submit),
       ],
     );
   }
@@ -533,8 +504,9 @@ class _PasswordStrengthBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (strength.level == PasswordStrengthLevel.none)
+    if (strength.level == PasswordStrengthLevel.none) {
       return const SizedBox.shrink();
+    }
 
     return Row(
       children: [
@@ -624,14 +596,19 @@ class _FieldState extends State<_Field> {
                       hintText: widget.hint,
                       hintStyle: AppText.ui(15, color: AppColors.text3),
                       border: InputBorder.none,
-                      contentPadding: const EdgeInsets.symmetric(vertical: 14),
+                      contentPadding: const EdgeInsets.symmetric(
+                        vertical: 14,
+                        horizontal: 16, // Added horizontal padding
+                      ),
                       isDense: true,
                     ),
                   ),
                 ),
                 if (widget.trailing != null) ...[
-                  const SizedBox(width: 8),
-                  widget.trailing!,
+                  Padding(
+                    padding: const EdgeInsets.only(right: 12),
+                    child: widget.trailing!,
+                  ),
                 ],
               ],
             ),
@@ -757,18 +734,17 @@ class _AuthBgPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final topGlow = Paint()
-      ..shader =
-          RadialGradient(
-            colors: [
-              AppColors.gold.withValues(alpha: 0.07),
-              Colors.transparent,
-            ],
-          ).createShader(
-            Rect.fromCircle(
-              center: Offset(size.width, 0),
-              radius: size.width * 0.7,
-            ),
-          );
+      ..shader = RadialGradient(
+        colors: [
+          AppColors.gold.withValues(alpha: 0.07),
+          Colors.transparent,
+        ],
+      ).createShader(
+        Rect.fromCircle(
+          center: Offset(size.width, 0),
+          radius: size.width * 0.7,
+        ),
+      );
     canvas.drawRect(Rect.fromLTWH(0, 0, size.width, size.height), topGlow);
   }
 

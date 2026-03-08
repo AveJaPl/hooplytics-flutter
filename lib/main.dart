@@ -90,10 +90,11 @@ abstract class AppText {
     FontWeight weight = FontWeight.w400,
     Color color = AppColors.text1,
     double letterSpacing = 0.0,
-  }) => GoogleFonts.dmSans(
-    fontSize: size,
-    fontWeight: weight,
-    color: color,
-    letterSpacing: letterSpacing,
-  );
+  }) =>
+      GoogleFonts.dmSans(
+        fontSize: size,
+        fontWeight: weight,
+        color: color,
+        letterSpacing: letterSpacing,
+      );
 }

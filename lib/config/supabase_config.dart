@@ -1,8 +1,9 @@
 /// Supabase configuration.
 /// Replace these placeholders with your actual Supabase project credentials.
 class SupabaseConfig {
-  static const String url = 'YOUR_SUPABASE_URL';
-  static const String anonKey = 'YOUR_SUPABASE_ANON_KEY';
+  static const String url = 'https://iimadclnuowxbiawfvka.supabase.co';
+  static const String anonKey =
+      'sb_publishable_HPYRYq6QnWC48nHyL17XBg_0Mqnw6AJ';
 
   // Google OAuth Client ID (for Google Sign-In)
   // Web client ID from Google Cloud Console

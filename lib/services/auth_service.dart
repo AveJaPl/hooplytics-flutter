@@ -48,7 +48,7 @@ class AuthService extends BaseService {
 
     final googleUser = await googleSignIn.signIn();
     if (googleUser == null) {
-      throw AuthException('Logowanie Google anulowane.');
+      throw const AuthException('Logowanie Google anulowane.');
     }
 
     final googleAuth = await googleUser.authentication;
@@ -56,7 +56,7 @@ class AuthService extends BaseService {
     final accessToken = googleAuth.accessToken;
 
     if (idToken == null) {
-      throw AuthException('Brak tokenu Google ID.');
+      throw const AuthException('Brak tokenu Google ID.');
     }
 
     return await client.auth.signInWithIdToken(

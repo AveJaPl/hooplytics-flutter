@@ -15,9 +15,9 @@ class AuthGate extends StatelessWidget {
       stream: Supabase.instance.client.auth.onAuthStateChange,
       builder: (context, snapshot) {
         if (!snapshot.hasData) {
-          return Scaffold(
+          return const Scaffold(
             backgroundColor: AppColors.bg,
-            body: const Center(
+            body: Center(
               child: CircularProgressIndicator(color: AppColors.gold),
             ),
           );
