@@ -46,8 +46,6 @@ workflows:
       email:
         recipients:
           - your-email@example.com
-        success: true
-        failure: true
       app_store_connect:
-        auth: integration # Uses the App Store Connect integration from Codemagic settings
+        auth: integration
         submit_to_testflight: true
