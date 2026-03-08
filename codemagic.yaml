@@ -1,0 +1,54 @@
+workflows:
+  ios-workflow:
+    name: iOS Build
+    max_build_duration: 120
+    instance_type: mac_mini_m1
+    environment:
+      flutter: stable
+      xcode: latest
+      cocoapods: default
+      groups:
+        - apple_auth # Variable group for Apple Developer credentials in Codemagic UI
+      vars:
+        XCODE_SCHEME: "Runner"
+        APP_ID: 1234567890 # Replace with your App Store Connect App ID
+    triggering:
+      events:
+        - push
+      branch_patterns:
+        - pattern: main
+          include: true
+          source: true
+    scripts:
+      - name: Set up code signing settings on Codemagic
+        script: |
+          keychain initialize
+          app-store-connect fetch-signing-files "com.your.bundle.id" --project-type flutter --atv-allow-provisioning-profiles
+          keychain add-certificates
+          xcode-project use-profiles
+      - name: Get Flutter packages
+        script: |
+          flutter packages pub get
+      - name: Install pods
+        script: |
+          find . -name "Podfile" -execdir pod install \;
+      - name: Flutter build ipa
+        script: |
+          flutter build ipa --release \
+            --build-name=1.0.0 \
+            --build-number=$(($(app-store-connect get-latest-testflight-build-number --app-id $APP_ID) + 1)) \
+            --export-options-plist=$HOME/export_options.plist
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
+      - flutter_drive.log
+    publishing:
+      email:
+        recipients:
+          - your-email@example.com
+        notifying:
+          success: true
+          failure: true
+      app_store_connect:
+        auth: integration # Uses the App Store Connect integration from Codemagic settings
+        submit_to_testflight: true
