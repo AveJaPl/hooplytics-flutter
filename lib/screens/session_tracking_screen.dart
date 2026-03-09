@@ -42,20 +42,16 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
 
   final Stopwatch _sw = Stopwatch();
   Timer? _ticker;
-  Timer? _restartTimer; // ZMIANA: Timer do bezpiecznego restartu mikrofonu
+  Timer? _restartTimer;
 
   // ── Speech-to-text ────────────────────────────────────────────────────────
   final SpeechToText _speech = SpeechToText();
   bool _speechAvailable = false;
   bool _voiceOn = false;
 
-  // Debounce: prevents the same word triggering twice within cooldown window
-  String _lastProcessed = '';
-  DateTime _lastCommandAt = DateTime(2000);
-  static const _commandCooldown = Duration(milliseconds: 900);
-
-  // Re-entry guard while we restart the listen session
-  bool _handlingResult = false;
+  // ZMIANA: Rzeczywiste 3-sekundowe ograniczenie między komendami
+  DateTime _lastCommandTime = DateTime(2000);
+  static const _minCommandInterval = Duration(seconds: 3);
 
   String _flashText = '';
   Color _flashColor = AppColors.green;
@@ -67,7 +63,6 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
   late final AnimationController _missPressCtrl = AnimationController(
       vsync: this, duration: const Duration(milliseconds: 260));
 
-  // ZMIANA: Rygorystyczne typowanie <double> w animacjach
   late final Animation<double> _makePressScale = TweenSequence<double>([
     TweenSequenceItem<double>(
         tween: Tween<double>(begin: 1.0, end: 0.94), weight: 35),
@@ -138,20 +133,25 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
   }
 
   Future<void> _initSpeech() async {
-    _speechAvailable = await _speech.initialize(
-      onStatus: _onSpeechStatus,
-      onError: (e) {
-        // ZMIANA: bezpieczny restart po błędzie ciszy
-        _scheduleListenRestart();
-      },
-    );
+    try {
+      _speechAvailable = await _speech.initialize(
+        onStatus: _onSpeechStatus,
+        onError: (e) {
+          debugPrint('Speech error: ${e.errorMsg}');
+          _scheduleListenRestart();
+        },
+      );
+    } catch (e) {
+      debugPrint('Init speech error: $e');
+      _speechAvailable = false;
+    }
     if (mounted) setState(() {});
   }
 
   @override
   void dispose() {
     _ticker?.cancel();
-    _restartTimer?.cancel(); // ZMIANA: sprzątanie Timera
+    _restartTimer?.cancel();
     _sw.stop();
     _speech.stop();
     _flashCtrl.dispose();
@@ -167,6 +167,12 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
 
   void _recordMake({bool swish = false}) {
     HapticFeedback.mediumImpact();
+    // ZMIANA: Mocniejszy feedback przy komendzie głosowej
+    if (_voiceOn) {
+      HapticFeedback.heavyImpact();
+      SystemSound.play(SystemSoundType.click);
+    }
+
     setState(() {
       _made++;
       if (swish) _swishes++;
@@ -177,7 +183,7 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
       _flashText = swish ? '+ SWISH' : '+ MADE';
       _flashColor = swish ? AppColors.gold : AppColors.green;
     });
-    // ZMIANA: forward(from: 0.0) zamiast 0
+
     if (swish) {
       _swishPressCtrl.forward(from: 0.0);
     } else {
@@ -188,6 +194,12 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
 
   void _recordMiss() {
     HapticFeedback.lightImpact();
+    // ZMIANA: Mocniejszy feedback przy komendzie głosowej
+    if (_voiceOn) {
+      HapticFeedback.mediumImpact();
+      SystemSound.play(SystemSoundType.alert);
+    }
+
     setState(() {
       _attempts++;
       _streak = 0;
@@ -195,7 +207,6 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
       _flashText = 'MISS';
       _flashColor = AppColors.red;
     });
-    // ZMIANA: forward(from: 0.0) zamiast 0
     _missPressCtrl.forward(from: 0.0);
     _flashCtrl.forward(from: 0.0);
   }
@@ -203,6 +214,8 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
   void _undo() {
     if (_log.isEmpty) return;
     HapticFeedback.selectionClick();
+    if (_voiceOn) SystemSound.play(SystemSoundType.click);
+
     setState(() {
       final last = _log.removeLast();
       _attempts--;
@@ -211,7 +224,10 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
         if (last == ShotResult.swish) _swishes--;
         _streak = _recomputeStreak();
       }
+      _flashText = 'UNDO';
+      _flashColor = AppColors.blue;
     });
+    _flashCtrl.forward(from: 0.0);
   }
 
   int _recomputeStreak() {
@@ -228,11 +244,10 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
 
   // ── Voice commands ────────────────────────────────────────────────────────
 
-  // ZMIANA: Nowa metoda zapobiegająca dublowaniu odświeżania
   void _scheduleListenRestart() {
     if (!_voiceOn || !mounted) return;
     _restartTimer?.cancel();
-    _restartTimer = Timer(const Duration(milliseconds: 200), () {
+    _restartTimer = Timer(const Duration(milliseconds: 300), () {
       if (_voiceOn && mounted && !_speech.isListening) {
         _startListening();
       }
@@ -246,100 +261,192 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
         _flashText = 'MIC NIEDOSTĘPNY';
         _flashColor = AppColors.red;
       });
-      // ZMIANA: forward(from: 0.0)
       _flashCtrl.forward(from: 0.0);
       return;
     }
+
     setState(() => _voiceOn = !_voiceOn);
+
     if (_voiceOn) {
-      _startListening();
+      // ZMIANA: Reset czasu przy włączeniu
+      _lastCommandTime = DateTime.now().subtract(_minCommandInterval);
+      _showVoiceFeedback('VOICE ON');
+      Future.delayed(const Duration(milliseconds: 300), _startListening);
     } else {
-      _restartTimer?.cancel(); // ZMIANA: Anulowanie restartu przy wyłączaniu
+      _restartTimer?.cancel();
       _speech.stop();
+      _showVoiceFeedback('VOICE OFF');
     }
   }
 
+  // ZMIANA: Pomocnicza metoda do pokazywania feedbacku głosowego
+  void _showVoiceFeedback(String text) {
+    setState(() {
+      _flashText = text;
+      _flashColor = AppColors.gold;
+    });
+    _flashCtrl.forward(from: 0.0);
+    HapticFeedback.mediumImpact();
+  }
+
   void _startListening() {
-    // ZMIANA: Zabezpieczenie przed podwójnym startem isListening
     if (!_speechAvailable || !_voiceOn || !mounted || _speech.isListening) {
       return;
     }
 
-    _speech.listen(
-      listenOptions: SpeechListenOptions(
-        partialResults: false,
-      ),
-      pauseFor: const Duration(seconds: 2),
-      listenFor: const Duration(seconds: 30),
-      localeId: 'pl_PL',
-      onResult: _onSpeechResult,
-    );
-  }
-
-  void _onSpeechStatus(String status) {
-    if (!mounted) return;
-    if (_voiceOn && (status == 'done' || status == 'notListening')) {
-      // ZMIANA: Użycie nowej funkcji
+    try {
+      _speech.listen(
+        listenOptions: SpeechListenOptions(
+          partialResults: false,
+          // ZMIANA: Krótsze pauzowanie dla szybszego reagowania
+          listenMode: ListenMode.confirmation,
+        ),
+        // ZMIANA: Krótsze timeouty dla szybszego restartu
+        pauseFor: const Duration(seconds: 1),
+        listenFor: const Duration(seconds: 10),
+        localeId: 'pl_PL',
+        onResult: _onSpeechResult,
+      );
+    } catch (e) {
+      debugPrint('Listen error: $e');
       _scheduleListenRestart();
     }
   }
 
+  void _onSpeechStatus(String status) {
+    debugPrint('Speech status: $status');
+    if (!mounted) return;
+
+    if (_voiceOn && (status == 'done' || status == 'notListening')) {
+      _scheduleListenRestart();
+    }
+  }
+
+  // ZMIANA: Całkowicie nowa logika przetwarzania z 3-sekundowym cooldownem
   void _onSpeechResult(SpeechRecognitionResult result) {
-    if (!mounted) return; // ZMIANA: Zabezpieczenie asynchroniczne
+    if (!mounted) return;
     if (!result.finalResult) return;
-    if (_handlingResult) return;
-    _handlingResult = true;
 
     final raw = result.recognizedWords.toLowerCase().trim();
+    debugPrint('Recognized: "$raw"');
 
-    final now = DateTime.now();
-    if (raw == _lastProcessed &&
-        now.difference(_lastCommandAt) < _commandCooldown) {
-      _handlingResult = false;
+    // Analiza komendy
+    final command = _parseCommand(raw);
+    if (command == null) {
+      debugPrint('Unknown command: $raw');
+      _scheduleListenRestart();
       return;
     }
-    _lastProcessed = raw;
-    _lastCommandAt = now;
 
-    // Dispatch
+    final now = DateTime.now();
+    final timeSinceLastCommand = now.difference(_lastCommandTime);
+
+    if (timeSinceLastCommand < _minCommandInterval) {
+      // ZMIANA: Jeśli za szybko, pokaż ostrzeżenie ale nie przetwarzaj
+      final remaining = _minCommandInterval - timeSinceLastCommand;
+      debugPrint('Command too fast, remaining: ${remaining.inMilliseconds}ms');
+
+      setState(() {
+        _flashText = 'TOO FAST';
+        _flashColor = AppColors.orange;
+      });
+      _flashCtrl.forward(from: 0.0);
+
+      // Kontynuuj słuchanie od razu
+      _scheduleListenRestart();
+      return;
+    }
+
+    // Przetwarzaj komendę
+    _lastCommandTime = now;
+    _executeCommand(command);
+
+    // ZMIANA: Zawsze restartuj natychmiast po komendzie, niezależnie od wyniku
+    _scheduleListenRestart();
+  }
+
+  // ZMIANA: Wydzielona metoda parsowania komendy
+  String? _parseCommand(String raw) {
+    // Make
     if (raw.contains('punkt') ||
         raw.contains('trafiony') ||
-        raw.contains('traf')) {
-      _recordMake(swish: false);
-    } else if (raw.contains('czysto') ||
+        raw.contains('traf') ||
+        raw.contains('make') ||
+        raw.contains('yes')) {
+      return 'make';
+    }
+
+    // Swish
+    if (raw.contains('czysto') ||
         raw.contains('swish') ||
-        raw.contains('swoosh')) {
-      _recordMake(swish: true);
-    } else if (raw.contains('pudło') ||
+        raw.contains('swoosh') ||
+        raw.contains('czyste')) {
+      return 'swish';
+    }
+
+    // Miss
+    if (raw.contains('pudło') ||
         raw.contains('pudlo') ||
         raw.contains('chybiony') ||
         raw.contains('miss') ||
-        raw.contains('pud')) {
-      _recordMiss();
-    } else if (raw.contains('cofnij') ||
+        raw.contains('pud') ||
+        raw.contains('no')) {
+      return 'miss';
+    }
+
+    // Undo
+    if (raw.contains('cofnij') ||
         raw.contains('wróć') ||
         raw.contains('wroc') ||
-        raw.contains('undo')) {
-      _undo();
-    } else if (raw.contains('koniec') ||
+        raw.contains('undo') ||
+        raw.contains('back')) {
+      return 'undo';
+    }
+
+    // Finish
+    if (raw.contains('koniec') ||
         raw.contains('zakończ') ||
         raw.contains('zakoncz') ||
         raw.contains('stop') ||
-        raw.contains('finish')) {
-      setState(() => _voiceOn = false);
-      _restartTimer?.cancel();
-      _speech.stop();
-      _finish();
+        raw.contains('finish') ||
+        raw.contains('end')) {
+      return 'finish';
     }
 
-    _handlingResult = false;
+    return null;
+  }
+
+  // ZMIANA: Wydzielona metoda wykonująca komendę
+  void _executeCommand(String command) {
+    debugPrint('Executing command: $command');
+
+    switch (command) {
+      case 'make':
+        _recordMake(swish: false);
+        break;
+      case 'swish':
+        _recordMake(swish: true);
+        break;
+      case 'miss':
+        _recordMiss();
+        break;
+      case 'undo':
+        _undo();
+        break;
+      case 'finish':
+        setState(() => _voiceOn = false);
+        _restartTimer?.cancel();
+        _speech.stop();
+        _finish();
+        break;
+    }
   }
 
   // ── Finish ────────────────────────────────────────────────────────────────
 
   void _finish() {
     _ticker?.cancel();
-    _restartTimer?.cancel(); // ZMIANA: Sprzątanie timera przy wyjściu
+    _restartTimer?.cancel();
     _sw.stop();
     showModalBottomSheet(
       context: context,
@@ -458,7 +565,6 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
             animation: _flashCtrl,
             builder: (_, __) {
               final t = _flashCtrl.value;
-              // ZMIANA: Zabezpieczenie .clamp() przed wartościami ujemnymi
               final opacity =
                   (t < 0.6 ? 1.0 : (1.0 - (t - 0.6) / 0.4)).clamp(0.0, 1.0);
               return Opacity(
@@ -1151,12 +1257,13 @@ class _VoiceTipsSheet extends StatelessWidget {
   const _VoiceTipsSheet();
   @override
   Widget build(BuildContext context) {
+    // ZMIANA: Zaktualizowane komendy
     const tips = [
-      ('"punkt"', 'Records a make', AppColors.green),
-      ('"czysto"', 'Records a swish', AppColors.gold),
-      ('"pudło"', 'Records a miss', AppColors.red),
-      ('"cofnij"', 'Undoes last shot', AppColors.text2),
-      ('"koniec"', 'Ends the session', AppColors.blue),
+      ('"punkt" / "traf" / "make"', 'Records a make', AppColors.green),
+      ('"czysto" / "swish" / "swoosh"', 'Records a swish', AppColors.gold),
+      ('"pudło" / "pud" / "miss"', 'Records a miss', AppColors.red),
+      ('"cofnij" / "undo" / "back"', 'Undoes last shot', AppColors.text2),
+      ('"koniec" / "stop" / "finish"', 'Ends the session', AppColors.blue),
     ];
     return Container(
       margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
@@ -1201,6 +1308,27 @@ class _VoiceTipsSheet extends StatelessWidget {
                   Text(t.$2, style: AppText.ui(14, color: AppColors.text2)),
                 ]))),
             const SizedBox(height: 4),
+            // ZMIANA: Dodana informacja o cooldownie
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: AppColors.surfaceHi,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.info_outline,
+                      size: 16, color: AppColors.text3),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Min. 3 seconds between commands',
+                      style: AppText.ui(12, color: AppColors.text3),
+                    ),
+                  ),
+                ],
+              ),
+            ),
           ]),
     );
   }

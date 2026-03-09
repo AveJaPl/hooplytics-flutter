@@ -72,6 +72,7 @@ abstract class AppColors {
   static const redSoft = Color(0x16FF5252);
   static const blue = Color(0xFF5E8FEF);
   static const blueSoft = Color(0x165E8FEF);
+  static const orange = Color(0xFFFF9800);
 }
 
 abstract class AppText {
