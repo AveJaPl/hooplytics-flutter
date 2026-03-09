@@ -2,8 +2,6 @@ import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:audioplayers/audioplayers.dart';
-import 'package:wakelock_plus/wakelock_plus.dart'; // ZMIANA: Import Wakelock
 import '../main.dart';
 import 'session_setup_screen.dart';
 import '../models/session.dart';
@@ -44,9 +42,7 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
 
   final Stopwatch _sw = Stopwatch();
   Timer? _ticker;
-  Timer? _restartTimer;
-
-  final AudioPlayer _audioPlayer = AudioPlayer();
+  Timer? _restartTimer; // ZMIANA: Timer do bezpiecznego restartu mikrofonu
 
   // ── Speech-to-text ────────────────────────────────────────────────────────
   final SpeechToText _speech = SpeechToText();
@@ -71,6 +67,7 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
   late final AnimationController _missPressCtrl = AnimationController(
       vsync: this, duration: const Duration(milliseconds: 260));
 
+  // ZMIANA: Rygorystyczne typowanie <double> w animacjach
   late final Animation<double> _makePressScale = TweenSequence<double>([
     TweenSequenceItem<double>(
         tween: Tween<double>(begin: 1.0, end: 0.94), weight: 35),
@@ -133,7 +130,6 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
   @override
   void initState() {
     super.initState();
-    WakelockPlus.enable(); // ZMIANA: Włączenie ekranu na stałe
     _sw.start();
     _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
       if (mounted) setState(() {});
@@ -145,6 +141,7 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
     _speechAvailable = await _speech.initialize(
       onStatus: _onSpeechStatus,
       onError: (e) {
+        // ZMIANA: bezpieczny restart po błędzie ciszy
         _scheduleListenRestart();
       },
     );
@@ -153,16 +150,14 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
 
   @override
   void dispose() {
-    WakelockPlus.disable(); // ZMIANA: Wyłączenie blokady ekranu przy wyjściu
     _ticker?.cancel();
-    _restartTimer?.cancel();
+    _restartTimer?.cancel(); // ZMIANA: sprzątanie Timera
     _sw.stop();
     _speech.stop();
     _flashCtrl.dispose();
     _makePressCtrl.dispose();
     _missPressCtrl.dispose();
     _swishPressCtrl.dispose();
-    _audioPlayer.dispose();
     _voiceCtrl.dispose();
     _entryCtrl.dispose();
     super.dispose();
@@ -182,12 +177,11 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
       _flashText = swish ? '+ SWISH' : '+ MADE';
       _flashColor = swish ? AppColors.gold : AppColors.green;
     });
+    // ZMIANA: forward(from: 0.0) zamiast 0
     if (swish) {
       _swishPressCtrl.forward(from: 0.0);
-      _playSound('swish.mp3', position: const Duration(milliseconds: 500));
     } else {
       _makePressCtrl.forward(from: 0.0);
-      _playSound('hit.mp3');
     }
     _flashCtrl.forward(from: 0.0);
   }
@@ -201,8 +195,8 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
       _flashText = 'MISS';
       _flashColor = AppColors.red;
     });
+    // ZMIANA: forward(from: 0.0) zamiast 0
     _missPressCtrl.forward(from: 0.0);
-    _playSound('miss.mp3');
     _flashCtrl.forward(from: 0.0);
   }
 
@@ -218,7 +212,6 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
         _streak = _recomputeStreak();
       }
     });
-    _playSound('undo.mp3', volume: 1.0);
   }
 
   int _recomputeStreak() {
@@ -235,6 +228,7 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
 
   // ── Voice commands ────────────────────────────────────────────────────────
 
+  // ZMIANA: Nowa metoda zapobiegająca dublowaniu odświeżania
   void _scheduleListenRestart() {
     if (!_voiceOn || !mounted) return;
     _restartTimer?.cancel();
@@ -252,6 +246,7 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
         _flashText = 'MIC NIEDOSTĘPNY';
         _flashColor = AppColors.red;
       });
+      // ZMIANA: forward(from: 0.0)
       _flashCtrl.forward(from: 0.0);
       return;
     }
@@ -259,12 +254,13 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
     if (_voiceOn) {
       _startListening();
     } else {
-      _restartTimer?.cancel();
+      _restartTimer?.cancel(); // ZMIANA: Anulowanie restartu przy wyłączaniu
       _speech.stop();
     }
   }
 
   void _startListening() {
+    // ZMIANA: Zabezpieczenie przed podwójnym startem isListening
     if (!_speechAvailable || !_voiceOn || !mounted || _speech.isListening) {
       return;
     }
@@ -283,12 +279,13 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
   void _onSpeechStatus(String status) {
     if (!mounted) return;
     if (_voiceOn && (status == 'done' || status == 'notListening')) {
+      // ZMIANA: Użycie nowej funkcji
       _scheduleListenRestart();
     }
   }
 
   void _onSpeechResult(SpeechRecognitionResult result) {
-    if (!mounted) return;
+    if (!mounted) return; // ZMIANA: Zabezpieczenie asynchroniczne
     if (!result.finalResult) return;
     if (_handlingResult) return;
     _handlingResult = true;
@@ -341,11 +338,8 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
   // ── Finish ────────────────────────────────────────────────────────────────
 
   void _finish() {
-    WakelockPlus
-        .disable(); // ZMIANA: Wyłączenie blokady, gdy otwieramy podsumowanie
     _ticker?.cancel();
-    _restartTimer?.cancel();
-    _playSound('end.mp3');
+    _restartTimer?.cancel(); // ZMIANA: Sprzątanie timera przy wyjściu
     _sw.stop();
     showModalBottomSheet(
       context: context,
@@ -369,30 +363,7 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
           Navigator.of(context).pop();
         },
       ),
-    ).then((_) {
-      // ZMIANA: Opcjonalne zabezpieczenie, jeśli użytkownik zamknie podsumowanie (bez zapisu/discardu)
-      // i wróci do treningu, znowu włączamy ekran
-      if (mounted) {
-        WakelockPlus.enable();
-        _sw.start();
-        _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
-          if (mounted) setState(() {});
-        });
-      }
-    });
-  }
-
-  // ── Odtwarzacz Dźwięku ────────────────────────────────────────────────────
-
-  Future<void> _playSound(String name,
-      {double volume = 0.7, Duration? position}) async {
-    try {
-      await _audioPlayer.play(
-        AssetSource('sounds/$name'),
-        volume: volume,
-        position: position,
-      );
-    } catch (_) {}
+    );
   }
 
   // ── Build ─────────────────────────────────────────────────────────────────
@@ -487,6 +458,7 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
             animation: _flashCtrl,
             builder: (_, __) {
               final t = _flashCtrl.value;
+              // ZMIANA: Zabezpieczenie .clamp() przed wartościami ujemnymi
               final opacity =
                   (t < 0.6 ? 1.0 : (1.0 - (t - 0.6) / 0.4)).clamp(0.0, 1.0);
               return Opacity(
@@ -1180,11 +1152,11 @@ class _VoiceTipsSheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     const tips = [
-      ('"punkt" / "traf"', 'Records a make', AppColors.green),
-      ('"czysto" / "swish"', 'Records a swish', AppColors.gold),
-      ('"pudło" / "miss"', 'Records a miss', AppColors.red),
-      ('"cofnij" / "wróć"', 'Undoes last shot', AppColors.text2),
-      ('"koniec" / "stop"', 'Ends the session', AppColors.blue),
+      ('"punkt"', 'Records a make', AppColors.green),
+      ('"czysto"', 'Records a swish', AppColors.gold),
+      ('"pudło"', 'Records a miss', AppColors.red),
+      ('"cofnij"', 'Undoes last shot', AppColors.text2),
+      ('"koniec"', 'Ends the session', AppColors.blue),
     ];
     return Container(
       margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
