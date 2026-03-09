@@ -337,72 +337,50 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
     _flashCtrl.forward(from: 0.0);
   }
 
-  /// Jedyna metoda, która odpala _speech.listen().
-  /// Chroniona przez _isStarting – reentrant-safe.
   Future<void> _startListening() async {
-    // Warunki wejścia
     if (!_voiceOn || !mounted || !_speechAvailable) return;
-    if (_isStarting) return; // już startujemy, nie wchodzimy ponownie
-    if (_isListening) return; // już słuchamy
+    if (_isStarting) return;
+    // NIE sprawdzamy _isListening tu – status callback to ustawia
 
     _isStarting = true;
+    debugPrint('STT: _startListening enter');
 
     try {
-      // Upewnij się, że poprzednia sesja jest zakończona
       if (_speech.isListening) {
         await _speech.stop();
-        // Daj iOS chwilę na zwolnienie AVAudioSession
-        await Future.delayed(const Duration(milliseconds: 200));
+        await Future.delayed(const Duration(milliseconds: 150));
       }
-
-      if (!_voiceOn || !mounted) {
-        _isStarting = false;
-        return;
-      }
-
-      debugPrint('STT: starting listen');
+      if (!_voiceOn || !mounted) return;
 
       await _speech.listen(
         onResult: _onSpeechResult,
-        // iOS: max ~60s, używamy 55s żeby mieć margines
-        // To eliminuje crash z "za krótkim" oknem
         listenFor: const Duration(seconds: 55),
-        // pauseFor: ile ciszy kończy rozpoznawanie i zwraca wynik
-        // 800ms – szybka reakcja, iOS zdąży przetworzyć krótkie komendy
-        pauseFor: const Duration(milliseconds: 800),
+        // KLUCZ: 2500ms – wystarczy żeby iOS nie restartował co sekundę,
+        // a użytkownik ma czas między rzutami. Przy 800ms sesja kończyła się
+        // po każdej chwili ciszy → pętla wznawiam/słucham.
+        pauseFor: const Duration(milliseconds: 2500),
         listenOptions: SpeechListenOptions(
-          // partialResults: false – wynik tylko gdy iOS jest pewien
-          // Eliminuje wielokrotne wywołanie tej samej komendy
           partialResults: false,
-          // dictation zamiast confirmation – lepsze dla ciągłego nasłuchiwania
           listenMode: ListenMode.dictation,
-          // Nie canceluj przy nowym wyniku – czekaj na pauseFor
           cancelOnError: false,
         ),
         localeId: 'pl_PL',
       );
-
-      if (mounted) setState(() => _isListening = true);
-      debugPrint('STT: listen started OK');
+      debugPrint('STT: listen() called OK');
     } catch (e) {
       debugPrint('STT: listen error: $e');
       if (mounted) setState(() => _isListening = false);
-      // Zaplanuj restart zamiast rekursji
-      _scheduleRestart(delay: const Duration(milliseconds: 800));
+      _scheduleRestart(delay: const Duration(milliseconds: 1000));
     } finally {
       _isStarting = false;
     }
   }
 
-  /// Zamiast wywoływać _startListening() bezpośrednio z callbacków,
-  /// używamy zawsze tej metody – anuluje poprzedni timer i ustawia nowy.
-  /// Dzięki temu wiele callbacków nie może nakładać wielu restartów.
-  void _scheduleRestart({Duration delay = const Duration(milliseconds: 500)}) {
+  void _scheduleRestart({Duration delay = const Duration(milliseconds: 600)}) {
     if (!_voiceOn || !mounted) return;
-
     _restartTimer?.cancel();
     _restartTimer = Timer(delay, () {
-      if (_voiceOn && mounted && !_isListening && !_isStarting) {
+      if (_voiceOn && mounted && !_isStarting) {
         _startListening();
       }
     });
@@ -412,17 +390,20 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
     debugPrint('STT status: $status');
     if (!mounted) return;
 
-    // Aktualizuj flagę nasłuchiwania
-    final nowListening = _speech.isListening;
-    if (_isListening != nowListening) {
-      setState(() => _isListening = nowListening);
+    // _isListening napędzany WYŁĄCZNIE przez status – nie przez _speech.isListening
+    // To eliminuje migotanie: isListening zwraca false przez ~50ms przy każdym
+    // przejściu między stanami, co poprzednio powodowało fałszywy restart.
+    if (status == 'listening') {
+      if (!_isListening) setState(() => _isListening = true);
+    } else if (status == 'done') {
+      // 'done' = sesja zakończona normalnie (pauseFor minął lub listenFor minął)
+      // To jest JEDYNY trigger restartu – nie 'notListening', nie 'error'
+      if (_isListening) setState(() => _isListening = false);
+      _scheduleRestart();
     }
-
-    // Jedyny trigger restartu – kiedy sesja się skończyła
-    if (status == 'done' || status == 'notListening') {
-      _scheduleRestart(delay: const Duration(milliseconds: 300));
-    }
-    // 'error' obsługiwany przez onError callback
+    // 'notListening' ignorujemy – pojawia się PRZED 'listening' przy starcie
+    // i fałszywie sugerowałoby że trzeba restartować
+    // 'error' obsługuje onError callback w initialize()
   }
 
   void _onSpeechResult(SpeechRecognitionResult result) {
