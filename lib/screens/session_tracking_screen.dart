@@ -42,16 +42,18 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
 
   final Stopwatch _sw = Stopwatch();
   Timer? _ticker;
-  Timer? _restartTimer;
 
   // ── Speech-to-text ────────────────────────────────────────────────────────
   final SpeechToText _speech = SpeechToText();
   bool _speechAvailable = false;
   bool _voiceOn = false;
 
-  // ZMIANA: Rzeczywiste 3-sekundowe ograniczenie między komendami
-  DateTime _lastCommandTime = DateTime(2000);
-  static const _minCommandInterval = Duration(seconds: 3);
+  // KLUCZOWA ZMIANA: Prosty timestamp zamiast złożonej logiki
+  DateTime _lastCommandAt = DateTime(2000);
+  static const _commandCooldown = Duration(seconds: 3);
+
+  // Guard przeciwko podwójnemu przetwarzaniu
+  bool _processing = false;
 
   String _flashText = '';
   Color _flashColor = AppColors.green;
@@ -138,7 +140,10 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
         onStatus: _onSpeechStatus,
         onError: (e) {
           debugPrint('Speech error: ${e.errorMsg}');
-          _scheduleListenRestart();
+          // Przy błędzie - spróbuj ponownie jeśli voice jest włączony
+          if (_voiceOn && mounted) {
+            Future.delayed(const Duration(milliseconds: 500), _startListening);
+          }
         },
       );
     } catch (e) {
@@ -150,8 +155,8 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
 
   @override
   void dispose() {
+    _voiceOn = false; // Zatrzymaj loop przed dispose
     _ticker?.cancel();
-    _restartTimer?.cancel();
     _sw.stop();
     _speech.stop();
     _flashCtrl.dispose();
@@ -167,9 +172,7 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
 
   void _recordMake({bool swish = false}) {
     HapticFeedback.mediumImpact();
-    // ZMIANA: Mocniejszy feedback przy komendzie głosowej
     if (_voiceOn) {
-      HapticFeedback.heavyImpact();
       SystemSound.play(SystemSoundType.click);
     }
 
@@ -194,9 +197,7 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
 
   void _recordMiss() {
     HapticFeedback.lightImpact();
-    // ZMIANA: Mocniejszy feedback przy komendzie głosowej
     if (_voiceOn) {
-      HapticFeedback.mediumImpact();
       SystemSound.play(SystemSoundType.alert);
     }
 
@@ -244,16 +245,6 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
 
   // ── Voice commands ────────────────────────────────────────────────────────
 
-  void _scheduleListenRestart() {
-    if (!_voiceOn || !mounted) return;
-    _restartTimer?.cancel();
-    _restartTimer = Timer(const Duration(milliseconds: 300), () {
-      if (_voiceOn && mounted && !_speech.isListening) {
-        _startListening();
-      }
-    });
-  }
-
   void _toggleVoice() async {
     HapticFeedback.selectionClick();
     if (!_speechAvailable) {
@@ -265,160 +256,156 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
       return;
     }
 
-    setState(() => _voiceOn = !_voiceOn);
+    final newVoiceState = !_voiceOn;
+    setState(() => _voiceOn = newVoiceState);
 
     if (_voiceOn) {
-      // ZMIANA: Reset czasu przy włączeniu
-      _lastCommandTime = DateTime.now().subtract(_minCommandInterval);
-      _showVoiceFeedback('VOICE ON');
+      // Reset cooldown przy włączeniu
+      _lastCommandAt = DateTime.now().subtract(_commandCooldown);
+      _showFeedback('VOICE ON');
+      // Krótkie opóźnienie przed startem
       Future.delayed(const Duration(milliseconds: 300), _startListening);
     } else {
-      _restartTimer?.cancel();
       _speech.stop();
-      _showVoiceFeedback('VOICE OFF');
+      _showFeedback('VOICE OFF');
     }
   }
 
-  // ZMIANA: Pomocnicza metoda do pokazywania feedbacku głosowego
-  void _showVoiceFeedback(String text) {
+  void _showFeedback(String text) {
     setState(() {
       _flashText = text;
       _flashColor = AppColors.gold;
     });
     _flashCtrl.forward(from: 0.0);
-    HapticFeedback.mediumImpact();
   }
 
-  void _startListening() {
-    if (!_speechAvailable || !_voiceOn || !mounted || _speech.isListening) {
+  // KLUCZOWA ZMIANA: Maksymalnie uproszczony startListening
+  void _startListening() async {
+    if (!_voiceOn || !mounted || !_speechAvailable) return;
+
+    // Jeśli już słucha, nie rób nic
+    if (_speech.isListening) {
+      debugPrint('Already listening, skipping');
       return;
     }
 
+    debugPrint('Starting listen...');
+
     try {
-      _speech.listen(
+      await _speech.listen(
+        onResult: _onSpeechResult,
+        // WAŻNE: Krótki czas nasłuchiwania dla iOS
+        listenFor: const Duration(seconds: 5),
+        pauseFor: const Duration(seconds: 2),
         listenOptions: SpeechListenOptions(
           partialResults: false,
-          // ZMIANA: Krótsze pauzowanie dla szybszego reagowania
           listenMode: ListenMode.confirmation,
         ),
-        // ZMIANA: Krótsze timeouty dla szybszego restartu
-        pauseFor: const Duration(seconds: 1),
-        listenFor: const Duration(seconds: 10),
         localeId: 'pl_PL',
-        onResult: _onSpeechResult,
       );
+      debugPrint('Listen started successfully');
     } catch (e) {
       debugPrint('Listen error: $e');
-      _scheduleListenRestart();
+      // Przy błędzie - spróbuj ponownie
+      if (_voiceOn && mounted) {
+        Future.delayed(const Duration(milliseconds: 600), _startListening);
+      }
     }
   }
 
+  // KLUCZOWA ZMIANA: Status handler zawsze restartuje gdy voiceOn
   void _onSpeechStatus(String status) {
     debugPrint('Speech status: $status');
+
     if (!mounted) return;
 
+    // Na iOS "done" oznacza koniec sesji - zawsze restartuj jeśli voiceOn
     if (_voiceOn && (status == 'done' || status == 'notListening')) {
-      _scheduleListenRestart();
+      debugPrint('Will restart listening...');
+      // Opóźnienie dla iOS - pozwól na teardown AVAudioSession
+      Future.delayed(const Duration(milliseconds: 250), () {
+        if (mounted && _voiceOn) {
+          _startListening();
+        }
+      });
     }
   }
 
-  // ZMIANA: Całkowicie nowa logika przetwarzania z 3-sekundowym cooldownem
+  // KLUCZOWA ZMIANA: Uproszczone przetwarzanie wyniku
   void _onSpeechResult(SpeechRecognitionResult result) {
     if (!mounted) return;
     if (!result.finalResult) return;
+    if (_processing) return; // Guard przeciwko podwójnemu przetwarzaniu
+
+    _processing = true;
 
     final raw = result.recognizedWords.toLowerCase().trim();
-    debugPrint('Recognized: "$raw"');
+    debugPrint('Heard: "$raw"');
 
-    // Analiza komendy
-    final command = _parseCommand(raw);
-    if (command == null) {
-      debugPrint('Unknown command: $raw');
-      _scheduleListenRestart();
-      return;
-    }
-
+    // Sprawdź cooldown
     final now = DateTime.now();
-    final timeSinceLastCommand = now.difference(_lastCommandTime);
+    final timeSinceLast = now.difference(_lastCommandAt);
 
-    if (timeSinceLastCommand < _minCommandInterval) {
-      // ZMIANA: Jeśli za szybko, pokaż ostrzeżenie ale nie przetwarzaj
-      final remaining = _minCommandInterval - timeSinceLastCommand;
-      debugPrint('Command too fast, remaining: ${remaining.inMilliseconds}ms');
-
-      setState(() {
-        _flashText = 'TOO FAST';
-        _flashColor = AppColors.orange;
-      });
-      _flashCtrl.forward(from: 0.0);
-
-      // Kontynuuj słuchanie od razu
-      _scheduleListenRestart();
+    if (timeSinceLast < _commandCooldown) {
+      final waitMs =
+          _commandCooldown.inMilliseconds - timeSinceLast.inMilliseconds;
+      debugPrint('Too fast, ignoring (wait ${waitMs}ms)');
+      _showFeedback('WAIT...');
+      _processing = false;
+      // Nie restartujemy - status handler zrobi to za nas
       return;
     }
 
-    // Przetwarzaj komendę
-    _lastCommandTime = now;
-    _executeCommand(command);
+    // Parsuj i wykonaj
+    final command = _parseCommand(raw);
+    if (command != null) {
+      _lastCommandAt = now;
+      _executeCommand(command);
+    } else {
+      debugPrint('Unknown command: $raw');
+    }
 
-    // ZMIANA: Zawsze restartuj natychmiast po komendzie, niezależnie od wyniku
-    _scheduleListenRestart();
+    _processing = false;
+    // Nie restartujemy ręcznie - status handler zrobi to gdy iOS zakończy sesję
   }
 
-  // ZMIANA: Wydzielona metoda parsowania komendy
   String? _parseCommand(String raw) {
-    // Make
     if (raw.contains('punkt') ||
-        raw.contains('trafiony') ||
         raw.contains('traf') ||
         raw.contains('make') ||
         raw.contains('yes')) {
       return 'make';
     }
-
-    // Swish
     if (raw.contains('czysto') ||
         raw.contains('swish') ||
-        raw.contains('swoosh') ||
-        raw.contains('czyste')) {
+        raw.contains('swoosh')) {
       return 'swish';
     }
-
-    // Miss
     if (raw.contains('pudło') ||
         raw.contains('pudlo') ||
-        raw.contains('chybiony') ||
-        raw.contains('miss') ||
         raw.contains('pud') ||
+        raw.contains('miss') ||
         raw.contains('no')) {
       return 'miss';
     }
-
-    // Undo
     if (raw.contains('cofnij') ||
-        raw.contains('wróć') ||
         raw.contains('wroc') ||
         raw.contains('undo') ||
         raw.contains('back')) {
       return 'undo';
     }
-
-    // Finish
     if (raw.contains('koniec') ||
-        raw.contains('zakończ') ||
         raw.contains('zakoncz') ||
         raw.contains('stop') ||
         raw.contains('finish') ||
         raw.contains('end')) {
       return 'finish';
     }
-
     return null;
   }
 
-  // ZMIANA: Wydzielona metoda wykonująca komendę
   void _executeCommand(String command) {
-    debugPrint('Executing command: $command');
+    debugPrint('Executing: $command');
 
     switch (command) {
       case 'make':
@@ -434,20 +421,20 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
         _undo();
         break;
       case 'finish':
-        setState(() => _voiceOn = false);
-        _restartTimer?.cancel();
+        _voiceOn = false;
         _speech.stop();
         _finish();
-        break;
+        return; // Nie restartujemy
     }
   }
 
   // ── Finish ────────────────────────────────────────────────────────────────
 
   void _finish() {
+    _voiceOn = false;
     _ticker?.cancel();
-    _restartTimer?.cancel();
     _sw.stop();
+    _speech.stop();
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
@@ -1257,7 +1244,6 @@ class _VoiceTipsSheet extends StatelessWidget {
   const _VoiceTipsSheet();
   @override
   Widget build(BuildContext context) {
-    // ZMIANA: Zaktualizowane komendy
     const tips = [
       ('"punkt" / "traf" / "make"', 'Records a make', AppColors.green),
       ('"czysto" / "swish" / "swoosh"', 'Records a swish', AppColors.gold),
@@ -1308,7 +1294,6 @@ class _VoiceTipsSheet extends StatelessWidget {
                   Text(t.$2, style: AppText.ui(14, color: AppColors.text2)),
                 ]))),
             const SizedBox(height: 4),
-            // ZMIANA: Dodana informacja o cooldownie
             Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
@@ -1333,10 +1318,6 @@ class _VoiceTipsSheet extends StatelessWidget {
     );
   }
 }
-
-// ═════════════════════════════════════════════════════════════════════════════
-//  BACK BUTTON
-// ═════════════════════════════════════════════════════════════════════════════
 
 class _BackBtn extends StatelessWidget {
   final VoidCallback onTap;
