@@ -10,8 +10,7 @@ import '../services/session_service.dart';
 import 'package:supabase_flutter/supabase_flutter.dart' hide Session;
 import 'package:speech_to_text/speech_to_text.dart';
 import 'package:speech_to_text/speech_recognition_result.dart';
-// ZMIANA: Bezpieczniejsza biblioteka do dźwięków
-import 'package:flutter_beep/flutter_beep.dart';
+import 'package:audioplayers/audioplayers.dart';
 
 enum ShotResult { miss, make, swish }
 
@@ -53,6 +52,7 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
   DateTime _lastCommandAt = DateTime(2000);
   static const _commandCooldown = Duration(seconds: 3);
   bool _processing = false;
+  final AudioPlayer _audioPlayer = AudioPlayer();
 
   String _flashText = '';
   Color _flashColor = AppColors.green;
@@ -163,31 +163,30 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
     _swishPressCtrl.dispose();
     _voiceCtrl.dispose();
     _entryCtrl.dispose();
+    _audioPlayer.dispose();
     super.dispose();
   }
 
   // ── Audio Feedback ────────────────────────────────────────────────────────
 
-  // ZMIANA: Bezpieczne dźwięki z try-catch
   void _playSuccessSound() {
     try {
-      FlutterBeep.beep(); // Krótki beep dla make/swish
+      _audioPlayer.play(AssetSource('sounds/hit.mp3'), volume: 0.5);
     } catch (e) {
-      debugPrint('Beep error: $e');
+      debugPrint('Audio error: $e');
     }
   }
 
   void _playErrorSound() {
     try {
-      FlutterBeep.beep(false); // Inny ton dla miss
+      _audioPlayer.play(AssetSource('sounds/miss.mp3'), volume: 0.5);
     } catch (e) {
-      debugPrint('Beep error: $e');
+      debugPrint('Audio error: $e');
     }
   }
 
   void _playClickSound() {
     try {
-      // Używamy haptic jako fallback jeśli dźwięk nie działa
       HapticFeedback.selectionClick();
     } catch (e) {
       debugPrint('Haptic error: $e');
