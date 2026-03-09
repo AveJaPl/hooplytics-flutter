@@ -44,6 +44,8 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
   final Stopwatch _sw = Stopwatch();
   Timer? _ticker;
   Timer? _restartTimer;
+
+  // ZMIANA: Powrót do jednego odtwarzacza
   final AudioPlayer _audioPlayer = AudioPlayer();
 
   // ── Speech-to-text ────────────────────────────────────────────────────────
@@ -69,7 +71,6 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
   late final AnimationController _missPressCtrl = AnimationController(
       vsync: this, duration: const Duration(milliseconds: 260));
 
-  // ZMIANA: Rygorystyczne typowanie <double> w animacjach
   late final Animation<double> _makePressScale = TweenSequence<double>([
     TweenSequenceItem<double>(
         tween: Tween<double>(begin: 1.0, end: 0.94), weight: 35),
@@ -143,7 +144,6 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
     _speechAvailable = await _speech.initialize(
       onStatus: _onSpeechStatus,
       onError: (e) {
-        // ZMIANA: bezpieczny restart po błędzie ciszy
         _scheduleListenRestart();
       },
     );
@@ -153,14 +153,14 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
   @override
   void dispose() {
     _ticker?.cancel();
-    _restartTimer?.cancel(); // ZMIANA: sprzątanie Timera
+    _restartTimer?.cancel();
     _sw.stop();
     _speech.stop();
     _flashCtrl.dispose();
     _makePressCtrl.dispose();
     _missPressCtrl.dispose();
     _swishPressCtrl.dispose();
-    _audioPlayer.dispose();
+    _audioPlayer.dispose(); // ZMIANA: Sprzątanie pojedynczego odtwarzacza
     _voiceCtrl.dispose();
     _entryCtrl.dispose();
     super.dispose();
@@ -180,10 +180,9 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
       _flashText = swish ? '+ SWISH' : '+ MADE';
       _flashColor = swish ? AppColors.gold : AppColors.green;
     });
-    // ZMIANA: forward(from: 0.0) zamiast 0
     if (swish) {
       _swishPressCtrl.forward(from: 0.0);
-      _playSound('swish.mp3');
+      _playSound('swish.mp3', position: const Duration(milliseconds: 500));
     } else {
       _makePressCtrl.forward(from: 0.0);
       _playSound('hit.mp3');
@@ -200,7 +199,6 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
       _flashText = 'MISS';
       _flashColor = AppColors.red;
     });
-    // ZMIANA: forward(from: 0.0) zamiast 0
     _missPressCtrl.forward(from: 0.0);
     _playSound('miss.mp3');
     _flashCtrl.forward(from: 0.0);
@@ -218,7 +216,7 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
         _streak = _recomputeStreak();
       }
     });
-    _playSound('undo.mp3');
+    _playSound('undo.mp3', volume: 1.0);
   }
 
   int _recomputeStreak() {
@@ -235,7 +233,6 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
 
   // ── Voice commands ────────────────────────────────────────────────────────
 
-  // ZMIANA: Nowa metoda zapobiegająca dublowaniu odświeżania
   void _scheduleListenRestart() {
     if (!_voiceOn || !mounted) return;
     _restartTimer?.cancel();
@@ -253,7 +250,6 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
         _flashText = 'MIC NIEDOSTĘPNY';
         _flashColor = AppColors.red;
       });
-      // ZMIANA: forward(from: 0.0)
       _flashCtrl.forward(from: 0.0);
       return;
     }
@@ -261,13 +257,12 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
     if (_voiceOn) {
       _startListening();
     } else {
-      _restartTimer?.cancel(); // ZMIANA: Anulowanie restartu przy wyłączaniu
+      _restartTimer?.cancel();
       _speech.stop();
     }
   }
 
   void _startListening() {
-    // ZMIANA: Zabezpieczenie przed podwójnym startem isListening
     if (!_speechAvailable || !_voiceOn || !mounted || _speech.isListening) {
       return;
     }
@@ -286,13 +281,12 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
   void _onSpeechStatus(String status) {
     if (!mounted) return;
     if (_voiceOn && (status == 'done' || status == 'notListening')) {
-      // ZMIANA: Użycie nowej funkcji
       _scheduleListenRestart();
     }
   }
 
   void _onSpeechResult(SpeechRecognitionResult result) {
-    if (!mounted) return; // ZMIANA: Zabezpieczenie asynchroniczne
+    if (!mounted) return;
     if (!result.finalResult) return;
     if (_handlingResult) return;
     _handlingResult = true;
@@ -346,7 +340,7 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
 
   void _finish() {
     _ticker?.cancel();
-    _restartTimer?.cancel(); // ZMIANA: Sprzątanie timera przy wyjściu
+    _restartTimer?.cancel();
     _playSound('end.mp3');
     _sw.stop();
     showModalBottomSheet(
@@ -374,13 +368,21 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
     );
   }
 
-  // ── Build ─────────────────────────────────────────────────────────────────
+  // ── Odtwarzacz Dźwięku ────────────────────────────────────────────────────
 
-  Future<void> _playSound(String name) async {
+  // ZMIANA: Powrót do logiki pojedynczego odtwarzacza
+  Future<void> _playSound(String name,
+      {double volume = 0.7, Duration? position}) async {
     try {
-      await _audioPlayer.play(AssetSource('sounds/$name'), volume: 0.7);
+      await _audioPlayer.play(
+        AssetSource('sounds/$name'),
+        volume: volume,
+        position: position,
+      );
     } catch (_) {}
   }
+
+  // ── Build ─────────────────────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
@@ -472,7 +474,6 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
             animation: _flashCtrl,
             builder: (_, __) {
               final t = _flashCtrl.value;
-              // ZMIANA: Zabezpieczenie .clamp() przed wartościami ujemnymi
               final opacity =
                   (t < 0.6 ? 1.0 : (1.0 - (t - 0.6) / 0.4)).clamp(0.0, 1.0);
               return Opacity(
