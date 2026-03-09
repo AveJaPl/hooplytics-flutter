@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../main.dart';
 import 'session_tracking_screen.dart';
+import '../services/session_service.dart';
 
 // ═════════════════════════════════════════════════════════════════════════════
 //  DATA TYPES
@@ -21,49 +22,6 @@ class RangeZone {
   final int tier; // 0=layup 1=close 2=mid 3=three
   const RangeZone(this.id, this.label, this.tier);
 }
-
-class _GlobalStats {
-  final String label;
-  final double pct;
-  final int made, attempts;
-  const _GlobalStats(this.label, this.pct, this.made, this.attempts);
-
-  String get grade {
-    if (pct >= 0.85) return 'A+';
-    if (pct >= 0.75) return 'A';
-    if (pct >= 0.65) return 'B';
-    if (pct >= 0.55) return 'C';
-    return 'D';
-  }
-
-  Color get color {
-    if (pct >= 0.75) return AppColors.green;
-    if (pct >= 0.55) return AppColors.gold;
-    return AppColors.red;
-  }
-}
-
-final Map<String, _GlobalStats> _mockStats = {
-  // Zones
-  'layup': const _GlobalStats('Layup', 0.91, 312, 343),
-  'close': const _GlobalStats('Close Shot', 0.74, 188, 254),
-  'mid': const _GlobalStats('Mid Range', 0.63, 287, 456),
-  'three': const _GlobalStats('Three Point', 0.49, 497, 1014),
-  // Positions
-  'free_throw': const _GlobalStats('Free Throw', 0.88, 412, 468),
-  'left_corner': const _GlobalStats('Left Corner', 0.52, 87, 167),
-  'right_corner': const _GlobalStats('Right Corner', 0.58, 91, 157),
-  'left_wing': const _GlobalStats('Left Wing', 0.45, 132, 293),
-  'right_wing': const _GlobalStats('Right Wing', 0.48, 128, 266),
-  'top_arc': const _GlobalStats('Top of Arc', 0.44, 215, 488),
-  'left_elbow': const _GlobalStats('Left Elbow', 0.61, 74, 121),
-  'right_elbow': const _GlobalStats('Right Elbow', 0.63, 68, 108),
-  'left_mid': const _GlobalStats('Left Mid', 0.55, 89, 162),
-  'right_mid': const _GlobalStats('Right Mid', 0.57, 84, 147),
-  'left_block': const _GlobalStats('Left Block', 0.72, 145, 201),
-  'right_block': const _GlobalStats('Right Block', 0.70, 138, 197),
-  'high_arc': const _GlobalStats('High Arc', 0.51, 112, 220),
-};
 
 // ═════════════════════════════════════════════════════════════════════════════
 //  COURT GEOMETRY  ← single source of truth, shared by all painters & screens
@@ -168,11 +126,44 @@ class SessionSetupScreen extends StatefulWidget {
 class _SessionSetupScreenState extends State<SessionSetupScreen>
     with SingleTickerProviderStateMixin {
   late final AnimationController _entry = AnimationController(
-      vsync: this, duration: const Duration(milliseconds: 460))
-    ..forward();
-
+      vsync: this, duration: const Duration(milliseconds: 460));
   SessionMode _mode = SessionMode.position;
   String? _selectedId = 'free_throw';
+  Map<String, dynamic>? _selectionStats;
+  bool _loadingStats = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _entry.forward();
+    _fetchStats();
+  }
+
+  Future<void> _fetchStats() async {
+    if (_selectedId == null) return;
+    setState(() => _loadingStats = true);
+    try {
+      final stats =
+          await SessionService().getSelectionStats(_selectedId!, _mode.name);
+      if (mounted) {
+        setState(() {
+          _selectionStats = stats;
+          _loadingStats = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) setState(() => _loadingStats = false);
+    }
+  }
+
+  void _select(String id) {
+    HapticFeedback.selectionClick();
+    setState(() {
+      _selectedId = id;
+      _selectionStats = null;
+    });
+    _fetchStats();
+  }
 
   static const _zones = [
     RangeZone('layup', 'Layup', 0),
@@ -221,9 +212,14 @@ class _SessionSetupScreenState extends State<SessionSetupScreen>
     return _zones.firstWhere((z) => z.id == _selectedId).label;
   }
 
-  void _select(String id) {
+  void _modeToggleAction(SessionMode newMode) {
     HapticFeedback.selectionClick();
-    setState(() => _selectedId = id);
+    setState(() {
+      _mode = newMode;
+      _selectedId = newMode == SessionMode.position ? 'free_throw' : 'mid';
+      _selectionStats = null;
+    });
+    _fetchStats();
   }
 
   void _start() {
@@ -310,20 +306,10 @@ class _SessionSetupScreenState extends State<SessionSetupScreen>
             borderRadius: BorderRadius.circular(11),
           ),
           child: Row(children: [
-            _Tab('Position', _mode == SessionMode.position, () {
-              HapticFeedback.selectionClick();
-              setState(() {
-                _mode = SessionMode.position;
-                _selectedId = 'free_throw';
-              });
-            }),
-            _Tab('Range', _mode == SessionMode.range, () {
-              HapticFeedback.selectionClick();
-              setState(() {
-                _mode = SessionMode.range;
-                _selectedId = 'mid';
-              });
-            }),
+            _Tab('Position', _mode == SessionMode.position,
+                () => _modeToggleAction(SessionMode.position)),
+            _Tab('Range', _mode == SessionMode.range,
+                () => _modeToggleAction(SessionMode.range)),
           ]),
         ),
       );
@@ -331,7 +317,8 @@ class _SessionSetupScreenState extends State<SessionSetupScreen>
   // ── hint row ─────────────────────────────────────────────────────────────────
 
   Widget _statsSection() {
-    final stats = _selectedId != null ? _mockStats[_selectedId] : null;
+    final stats = _selectionStats;
+    final String label = _label;
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
@@ -340,7 +327,7 @@ class _SessionSetupScreenState extends State<SessionSetupScreen>
 
         return AnimatedSwitcher(
           duration: const Duration(milliseconds: 300),
-          child: stats == null
+          child: (stats == null && !_loadingStats)
               ? Center(
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
@@ -358,7 +345,7 @@ class _SessionSetupScreenState extends State<SessionSetupScreen>
                   ),
                 )
               : Container(
-                  key: ValueKey(stats.label),
+                  key: ValueKey('${label}_$_loadingStats'),
                   width: double.infinity,
                   padding: EdgeInsets.all(isSmall ? 18 : 24),
                   decoration: BoxDecoration(
@@ -381,78 +368,115 @@ class _SessionSetupScreenState extends State<SessionSetupScreen>
                       ),
                     ],
                   ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Flexible(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
+                  child: _loadingStats
+                      ? const Center(
+                          child:
+                              CircularProgressIndicator(color: AppColors.gold))
+                      : Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
                               children: [
-                                Text('GLOBAL STATS',
-                                    style: AppText.ui(isSmall ? 9 : 10,
-                                        color: AppColors.gold,
-                                        letterSpacing: 2.0,
-                                        weight: FontWeight.w700)),
-                                SizedBox(height: isSmall ? 2 : 4),
-                                FittedBox(
-                                  fit: BoxFit.scaleDown,
-                                  child: Text(stats.label,
-                                      style: AppText.display(isSmall ? 24 : 28,
-                                          color: AppColors.text1)),
+                                Flexible(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text('YOUR HISTORY',
+                                          style: AppText.ui(isSmall ? 9 : 10,
+                                              color: AppColors.gold,
+                                              letterSpacing: 2.0,
+                                              weight: FontWeight.w700)),
+                                      SizedBox(height: isSmall ? 2 : 4),
+                                      FittedBox(
+                                        fit: BoxFit.scaleDown,
+                                        child: Text(label,
+                                            style: AppText.display(
+                                                isSmall ? 24 : 28,
+                                                color: AppColors.text1)),
+                                      ),
+                                    ],
+                                  ),
                                 ),
+                                const SizedBox(width: 8),
+                                _gradeBadge(
+                                    stats!['attempts'] > 0
+                                        ? stats['made'] / stats['attempts']
+                                        : 0.0,
+                                    isSmall),
                               ],
                             ),
-                          ),
-                          const SizedBox(width: 8),
-                          Container(
-                            width: isSmall ? 48 : 54,
-                            height: isSmall ? 48 : 54,
-                            decoration: BoxDecoration(
-                              color: stats.color.withValues(alpha: 0.1),
-                              shape: BoxShape.circle,
-                              border: Border.all(
-                                  color: stats.color.withValues(alpha: 0.3),
-                                  width: isSmall ? 1.5 : 2),
+                            if (isSmall)
+                              const SizedBox(height: 12)
+                            else
+                              const Spacer(),
+                            FittedBox(
+                              fit: BoxFit.scaleDown,
+                              child: Row(
+                                children: [
+                                  _statItem(
+                                      'ACCURACY',
+                                      '${stats['attempts'] > 0 ? (stats['made'] / stats['attempts'] * 100).round() : 0}%',
+                                      _getPctColor(stats['attempts'] > 0
+                                          ? stats['made'] / stats['attempts']
+                                          : 0.0),
+                                      isSmall),
+                                  SizedBox(width: isSmall ? 24 : 32),
+                                  _statItem('MAKES', '${stats['made']}',
+                                      AppColors.text1, isSmall),
+                                  SizedBox(width: isSmall ? 24 : 32),
+                                  _statItem('ATTEMPTS', '${stats['attempts']}',
+                                      AppColors.text2, isSmall),
+                                ],
+                              ),
                             ),
-                            child: Center(
-                              child: Text(stats.grade,
-                                  style: AppText.display(isSmall ? 20 : 24,
-                                      color: stats.color)),
-                            ),
-                          ),
-                        ],
-                      ),
-                      if (isSmall)
-                        const SizedBox(height: 12)
-                      else
-                        const Spacer(),
-                      FittedBox(
-                        fit: BoxFit.scaleDown,
-                        child: Row(
-                          children: [
-                            _statItem(
-                                'ACCURACY',
-                                '${(stats.pct * 100).round()}%',
-                                stats.color,
-                                isSmall),
-                            SizedBox(width: isSmall ? 24 : 32),
-                            _statItem('MAKES', '${stats.made}', AppColors.text1,
-                                isSmall),
-                            SizedBox(width: isSmall ? 24 : 32),
-                            _statItem('ATTEMPTS', '${stats.attempts}',
-                                AppColors.text2, isSmall),
                           ],
                         ),
-                      ),
-                    ],
-                  ),
                 ),
         );
       }),
     );
+  }
+
+  Widget _gradeBadge(double pct, bool isSmall) {
+    String grade = 'D';
+    Color color = AppColors.red;
+
+    if (pct >= 0.85) {
+      grade = 'A+';
+      color = AppColors.green;
+    } else if (pct >= 0.75) {
+      grade = 'A';
+      color = AppColors.green;
+    } else if (pct >= 0.65) {
+      grade = 'B';
+      color = AppColors.gold;
+    } else if (pct >= 0.55) {
+      grade = 'C';
+      color = AppColors.gold;
+    }
+
+    return Container(
+      width: isSmall ? 48 : 54,
+      height: isSmall ? 48 : 54,
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.1),
+        shape: BoxShape.circle,
+        border: Border.all(
+            color: color.withValues(alpha: 0.3), width: isSmall ? 1.5 : 2),
+      ),
+      child: Center(
+        child: Text(grade,
+            style: AppText.display(isSmall ? 20 : 24, color: color)),
+      ),
+    );
+  }
+
+  Color _getPctColor(double pct) {
+    if (pct >= 0.75) return AppColors.green;
+    if (pct >= 0.55) return AppColors.gold;
+    return AppColors.red;
   }
 
   Widget _statItem(String label, String value, Color color, bool isSmall) {

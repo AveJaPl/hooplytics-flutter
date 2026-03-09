@@ -8,7 +8,8 @@ import '../models/session.dart';
 import '../models/shot.dart';
 import '../services/session_service.dart';
 import 'package:supabase_flutter/supabase_flutter.dart' hide Session;
-import 'package:speech_to_text/speech_to_text.dart' as stt;
+import 'package:speech_to_text/speech_to_text.dart';
+import 'package:speech_to_text/speech_recognition_result.dart';
 
 enum ShotResult { miss, make, swish }
 
@@ -42,7 +43,18 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
   final Stopwatch _sw = Stopwatch();
   Timer? _ticker;
 
-  stt.SpeechToText? _speech;
+  // ── Speech-to-text ────────────────────────────────────────────────────────
+  final SpeechToText _speech = SpeechToText();
+  bool _speechAvailable = false;
+  bool _voiceOn = false;
+
+  // Debounce: prevents the same word triggering twice within cooldown window
+  String _lastProcessed = '';
+  DateTime _lastCommandAt = DateTime(2000);
+  static const _commandCooldown = Duration(milliseconds: 900);
+
+  // Re-entry guard while we restart the listen session
+  bool _handlingResult = false;
 
   String _flashText = '';
   Color _flashColor = AppColors.green;
@@ -75,7 +87,6 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
     TweenSequenceItem(tween: Tween(begin: 1.02, end: 1.0), weight: 25),
   ]).animate(CurvedAnimation(parent: _swishPressCtrl, curve: Curves.easeOut));
 
-  bool _voiceOn = false;
   late final AnimationController _voiceCtrl = AnimationController(
       vsync: this, duration: const Duration(milliseconds: 900))
     ..repeat(reverse: true);
@@ -83,63 +94,7 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
       vsync: this, duration: const Duration(milliseconds: 450))
     ..forward();
 
-  void _initSpeech() async {
-    _speech = stt.SpeechToText();
-    bool available = await _speech!.initialize(
-      onStatus: (status) {
-        if (status == 'done' && _voiceOn) {
-          // Keep listening automatically when it stops
-          _startListening();
-        }
-      },
-      onError: (error) => debugPrint('Speech Error: $error'),
-    );
-    if (!available) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Speech recognition not available')),
-        );
-      }
-    }
-  }
-
-  void _startListening() async {
-    if (_speech == null || !_speech!.isAvailable) return;
-    await _speech!.listen(
-      onResult: (result) {
-        final words = result.recognizedWords.toLowerCase();
-        _processVoiceCommand(words);
-      },
-      localeId: 'pl_PL', // Polish language for commands
-      pauseFor: const Duration(seconds: 2), // Keep phrase short
-    );
-  }
-
-  void _stopListening() async {
-    if (_speech != null) await _speech!.stop();
-  }
-
-  void _processVoiceCommand(String text) {
-    if (text.isEmpty) return;
-
-    // We only care about the latest word usually, or check if the string contains the keyword
-    if (text.contains('punkt')) {
-      _stopListening(); // Stop so we don't double trigger, it will restart automatically due to onStatus
-      _recordMake(swish: false);
-    } else if (text.contains('pudło')) {
-      _stopListening();
-      _recordMiss();
-    } else if (text.contains('czysto')) {
-      _stopListening();
-      _recordMake(swish: true);
-    } else if (text.contains('cofnij')) {
-      _stopListening();
-      _undo();
-    } else if (text.contains('koniec')) {
-      _stopListening();
-      _finish();
-    }
-  }
+  // ── Computed ──────────────────────────────────────────────────────────────
 
   double get _pct => _attempts == 0 ? 0.0 : _made / _attempts;
   String get _pctStr => _attempts == 0 ? '—' : '${(_pct * 100).round()}%';
@@ -159,6 +114,8 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
     return '$m:$s';
   }
 
+  // ── Lifecycle ─────────────────────────────────────────────────────────────
+
   @override
   void initState() {
     super.initState();
@@ -169,11 +126,24 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
     _initSpeech();
   }
 
+  Future<void> _initSpeech() async {
+    _speechAvailable = await _speech.initialize(
+      onStatus: _onSpeechStatus,
+      onError: (e) {
+        // iOS fires errors when session ends naturally — just restart
+        if (_voiceOn && mounted) {
+          Future.delayed(const Duration(milliseconds: 150), _startListening);
+        }
+      },
+    );
+    if (mounted) setState(() {});
+  }
+
   @override
   void dispose() {
     _ticker?.cancel();
     _sw.stop();
-    _stopListening();
+    _speech.stop();
     _flashCtrl.dispose();
     _makePressCtrl.dispose();
     _missPressCtrl.dispose();
@@ -182,6 +152,8 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
     _entryCtrl.dispose();
     super.dispose();
   }
+
+  // ── Shot recording ────────────────────────────────────────────────────────
 
   void _recordMake({bool swish = false}) {
     HapticFeedback.mediumImpact();
@@ -242,20 +214,90 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
     return s;
   }
 
+  // ── Voice commands ────────────────────────────────────────────────────────
+
   void _toggleVoice() async {
     HapticFeedback.selectionClick();
-
-    if (!_voiceOn) {
-      // turning on
-      if (_speech == null) return;
-      setState(() => _voiceOn = true);
+    if (!_speechAvailable) {
+      setState(() {
+        _flashText = 'MIC NIEDOSTĘPNY';
+        _flashColor = AppColors.red;
+      });
+      _flashCtrl.forward(from: 0);
+      return;
+    }
+    setState(() => _voiceOn = !_voiceOn);
+    if (_voiceOn) {
       _startListening();
     } else {
-      // turning off
-      setState(() => _voiceOn = false);
-      _stopListening();
+      _speech.stop();
     }
   }
+
+  void _startListening() {
+    if (!_speechAvailable || !_voiceOn || !mounted) return;
+    _speech.listen(
+      listenOptions: SpeechListenOptions(
+        partialResults: false,
+      ),
+      pauseFor: const Duration(seconds: 2),
+      listenFor: const Duration(seconds: 30),
+      localeId: 'pl_PL',
+      onResult: _onSpeechResult,
+    );
+  }
+
+  // FIX: iOS stops AVAudioSession after each utterance and fires "done".
+  // We restart immediately to get continuous listening.
+  void _onSpeechStatus(String status) {
+    if (!mounted) return;
+    if (_voiceOn && (status == 'done' || status == 'notListening')) {
+      // Small delay prevents race condition between iOS session teardown
+      // and the next AVAudioSession activation.
+      Future.delayed(const Duration(milliseconds: 120), _startListening);
+    }
+  }
+
+  void _onSpeechResult(SpeechRecognitionResult result) {
+    // FIX: guard — only handle truly final results
+    if (!result.finalResult) return;
+    // FIX: re-entry guard
+    if (_handlingResult) return;
+    _handlingResult = true;
+
+    final raw = result.recognizedWords.toLowerCase().trim();
+
+    // FIX: debounce — iOS sometimes fires the same text twice within ~200ms
+    final now = DateTime.now();
+    if (raw == _lastProcessed &&
+        now.difference(_lastCommandAt) < _commandCooldown) {
+      _handlingResult = false;
+      return;
+    }
+    _lastProcessed = raw;
+    _lastCommandAt = now;
+
+    // Dispatch
+    if (raw.contains('punkt') || raw.contains('trafiony')) {
+      _recordMake(swish: false);
+    } else if (raw.contains('czysto') || raw.contains('swish')) {
+      _recordMake(swish: true);
+    } else if (raw.contains('pudło') ||
+        raw.contains('pudlo') ||
+        raw.contains('chybiony')) {
+      _recordMiss();
+    } else if (raw.contains('cofnij') || raw.contains('wróć')) {
+      _undo();
+    } else if (raw.contains('koniec') || raw.contains('zakończ')) {
+      setState(() => _voiceOn = false);
+      _speech.stop();
+      _finish();
+    }
+
+    _handlingResult = false;
+  }
+
+  // ── Finish ────────────────────────────────────────────────────────────────
 
   void _finish() {
     _ticker?.cancel();
@@ -266,23 +308,26 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
       isScrollControlled: true,
       enableDrag: true,
       builder: (_) => _SummarySheet(
-          label: widget.selectionLabel,
-          mode: widget.mode,
-          selectionId: widget.selectionId,
-          targetShots: widget.targetShots,
-          made: _made,
-          swishes: _swishes,
-          attempts: _attempts,
-          bestStreak: _bestStreak,
-          elapsed: _sw.elapsed,
-          log: List.unmodifiable(_log),
-          onSave: () => Navigator.of(context).popUntil((r) => r.isFirst),
-          onDiscard: () {
-            Navigator.of(context).pop();
-            Navigator.of(context).pop();
-          }),
+        label: widget.selectionLabel,
+        mode: widget.mode,
+        selectionId: widget.selectionId,
+        targetShots: widget.targetShots,
+        made: _made,
+        swishes: _swishes,
+        attempts: _attempts,
+        bestStreak: _bestStreak,
+        elapsed: _sw.elapsed,
+        log: List.unmodifiable(_log),
+        onSave: () => Navigator.of(context).popUntil((r) => r.isFirst),
+        onDiscard: () {
+          Navigator.of(context).pop();
+          Navigator.of(context).pop();
+        },
+      ),
     );
   }
+
+  // ── Build ─────────────────────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
@@ -295,22 +340,23 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
           _topBar(),
           Expanded(
               child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 20),
-                  child: Column(children: [
-                    const SizedBox(height: 16),
-                    _flashLabel(),
-                    const Spacer(flex: 1),
-                    _mainGauge(),
-                    const SizedBox(height: 32),
-                    _statsRow(),
-                    const Spacer(flex: 2),
-                    _trendSection(),
-                    const Spacer(flex: 3),
-                    _trackButtons(),
-                    const SizedBox(height: 16),
-                    _utilBar(),
-                    const SizedBox(height: 16),
-                  ]))),
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            child: Column(children: [
+              const SizedBox(height: 16),
+              _flashLabel(),
+              const Spacer(flex: 1),
+              _mainGauge(),
+              const SizedBox(height: 32),
+              _statsRow(),
+              const Spacer(flex: 2),
+              _trendSection(),
+              const Spacer(flex: 3),
+              _trackButtons(),
+              const SizedBox(height: 16),
+              _utilBar(),
+              const SizedBox(height: 16),
+            ]),
+          )),
         ])),
       ),
     );
@@ -318,51 +364,52 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
 
   Widget _topBar() {
     return Padding(
-        padding: const EdgeInsets.fromLTRB(20, 18, 20, 0),
-        child: Row(children: [
-          _BackBtn(onTap: () => Navigator.of(context).pop()),
-          const SizedBox(width: 14),
-          Expanded(
-              child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                Text(widget.mode == SessionMode.position ? 'POSITION' : 'RANGE',
-                    style: AppText.ui(9,
-                        color: AppColors.text3,
-                        letterSpacing: 1.8,
-                        weight: FontWeight.w700)),
-                const SizedBox(height: 1),
-                Text(widget.selectionLabel,
-                    style: AppText.ui(17, weight: FontWeight.w700)),
-              ])),
-          Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-              decoration: BoxDecoration(
-                  color: AppColors.surface,
-                  border: Border.all(color: AppColors.border),
-                  borderRadius: BorderRadius.circular(10)),
-              child: Row(children: [
-                Container(
-                    width: 6,
-                    height: 6,
-                    decoration: const BoxDecoration(
-                        shape: BoxShape.circle, color: AppColors.green)),
-                const SizedBox(width: 7),
-                Text(_timerStr, style: AppText.ui(13, weight: FontWeight.w700)),
-              ])),
-          const SizedBox(width: 10),
-          GestureDetector(
-              onTap: _finish,
-              child: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
-                  decoration: BoxDecoration(
-                      color: AppColors.gold,
-                      borderRadius: BorderRadius.circular(10)),
-                  child: Text('Finish',
-                      style: AppText.ui(13,
-                          weight: FontWeight.w700, color: AppColors.bg)))),
-        ]));
+      padding: const EdgeInsets.fromLTRB(20, 18, 20, 0),
+      child: Row(children: [
+        _BackBtn(onTap: () => Navigator.of(context).pop()),
+        const SizedBox(width: 14),
+        Expanded(
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(widget.mode == SessionMode.position ? 'POSITION' : 'RANGE',
+              style: AppText.ui(9,
+                  color: AppColors.text3,
+                  letterSpacing: 1.8,
+                  weight: FontWeight.w700)),
+          const SizedBox(height: 1),
+          Text(widget.selectionLabel,
+              style: AppText.ui(17, weight: FontWeight.w700)),
+        ])),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+          decoration: BoxDecoration(
+              color: AppColors.surface,
+              border: Border.all(color: AppColors.border),
+              borderRadius: BorderRadius.circular(10)),
+          child: Row(children: [
+            Container(
+                width: 6,
+                height: 6,
+                decoration: const BoxDecoration(
+                    shape: BoxShape.circle, color: AppColors.green)),
+            const SizedBox(width: 7),
+            Text(_timerStr, style: AppText.ui(13, weight: FontWeight.w700)),
+          ]),
+        ),
+        const SizedBox(width: 10),
+        GestureDetector(
+          onTap: _finish,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
+            decoration: BoxDecoration(
+                color: AppColors.gold, borderRadius: BorderRadius.circular(10)),
+            child: Text('Finish',
+                style: AppText.ui(13,
+                    weight: FontWeight.w700, color: AppColors.bg)),
+          ),
+        ),
+      ]),
+    );
   }
 
   Widget _flashLabel() {
@@ -570,18 +617,29 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
                                           alpha: 0.45 +
                                               0.55 * _voiceCtrl.value)))),
                         Icon(
-                            _voiceOn
-                                ? Icons.mic_rounded
-                                : Icons.mic_none_rounded,
-                            size: 18,
-                            color: _voiceOn ? AppColors.gold : AppColors.text3),
+                          !_speechAvailable
+                              ? Icons.mic_off_rounded
+                              : (_voiceOn
+                                  ? Icons.mic_rounded
+                                  : Icons.mic_none_rounded),
+                          size: 18,
+                          color: !_speechAvailable
+                              ? AppColors.text3
+                              : (_voiceOn ? AppColors.gold : AppColors.text3),
+                        ),
                         const SizedBox(width: 8),
-                        Text(_voiceOn ? 'Listening…' : 'Voice Mode',
-                            style: AppText.ui(13,
-                                weight: FontWeight.w600,
-                                color: _voiceOn
-                                    ? AppColors.gold
-                                    : AppColors.text3)),
+                        Text(
+                          !_speechAvailable
+                              ? 'Mic niedostępny'
+                              : (_voiceOn ? 'Słucham…' : 'Voice Mode'),
+                          style: AppText.ui(13,
+                              weight: FontWeight.w600,
+                              color: !_speechAvailable
+                                  ? AppColors.text3
+                                  : (_voiceOn
+                                      ? AppColors.gold
+                                      : AppColors.text3)),
+                        ),
                       ])))),
       const SizedBox(width: 10),
       _UtilBtn(
@@ -596,7 +654,9 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
   }
 }
 
-// ── Painters & sub-widgets ───────────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════════════════════
+//  PAINTERS & SUB-WIDGETS
+// ═════════════════════════════════════════════════════════════════════════════
 
 class _MiniStat extends StatelessWidget {
   final String label, value;
@@ -616,7 +676,7 @@ class _MiniStat extends StatelessWidget {
               style: AppText.ui(10,
                   color: AppColors.text3,
                   weight: FontWeight.w700,
-                  letterSpacing: 1.0))
+                  letterSpacing: 1.0)),
         ]),
         const SizedBox(height: 6),
         Text(value, style: AppText.display(24, color: Colors.white)),
@@ -782,11 +842,13 @@ class _UtilBtn extends StatelessWidget {
                   children: [
                     Icon(icon, size: 19, color: AppColors.text2),
                     const SizedBox(height: 2),
-                    Text(label, style: AppText.ui(9, color: AppColors.text3))
+                    Text(label, style: AppText.ui(9, color: AppColors.text3)),
                   ]))));
 }
 
-// ── Summary sheet ────────────────────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════════════════════
+//  SUMMARY SHEET
+// ═════════════════════════════════════════════════════════════════════════════
 
 class _SummarySheet extends StatefulWidget {
   final String label;
@@ -798,19 +860,20 @@ class _SummarySheet extends StatefulWidget {
   final List<ShotResult> log;
   final VoidCallback onSave, onDiscard;
 
-  const _SummarySheet(
-      {required this.label,
-      required this.mode,
-      required this.selectionId,
-      required this.targetShots,
-      required this.made,
-      required this.swishes,
-      required this.attempts,
-      required this.bestStreak,
-      required this.elapsed,
-      required this.log,
-      required this.onSave,
-      required this.onDiscard});
+  const _SummarySheet({
+    required this.label,
+    required this.mode,
+    required this.selectionId,
+    required this.targetShots,
+    required this.made,
+    required this.swishes,
+    required this.attempts,
+    required this.bestStreak,
+    required this.elapsed,
+    required this.log,
+    required this.onSave,
+    required this.onDiscard,
+  });
 
   @override
   State<_SummarySheet> createState() => _SummarySheetState();
@@ -868,7 +931,7 @@ class _SummarySheetState extends State<_SummarySheet> {
 
       final shots = widget.log.asMap().entries.map((e) {
         return Shot(
-          sessionId: '', // assigned in service
+          sessionId: '',
           userId: user.id,
           orderIdx: e.key,
           isMake: e.value == ShotResult.make || e.value == ShotResult.swish,
@@ -891,137 +954,136 @@ class _SummarySheetState extends State<_SummarySheet> {
   @override
   Widget build(BuildContext context) {
     return Container(
-        margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-        padding: const EdgeInsets.all(26),
-        decoration: BoxDecoration(
-            color: AppColors.surface,
-            border: Border.all(color: AppColors.border),
-            borderRadius: BorderRadius.circular(24)),
-        child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Center(
-                  child: Container(
-                      width: 38,
-                      height: 3,
-                      margin: const EdgeInsets.only(bottom: 26),
-                      decoration: BoxDecoration(
-                          color: AppColors.border,
-                          borderRadius: BorderRadius.circular(2)))),
-              Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Expanded(
-                    child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                      Text('SESSION COMPLETE',
-                          style: AppText.ui(10,
-                              color: AppColors.text3,
-                              letterSpacing: 1.8,
-                              weight: FontWeight.w700)),
-                      const SizedBox(height: 6),
-                      Text(widget.label,
-                          style: AppText.ui(22, weight: FontWeight.w700)),
-                      const SizedBox(height: 4),
-                      Row(children: [
-                        const Icon(Icons.timer_outlined,
-                            size: 13, color: AppColors.text3),
-                        const SizedBox(width: 5),
-                        Text(_time,
-                            style: AppText.ui(12, color: AppColors.text3))
-                      ]),
-                    ])),
-                Container(
-                    width: 66,
-                    height: 66,
+      margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+      padding: const EdgeInsets.all(26),
+      decoration: BoxDecoration(
+          color: AppColors.surface,
+          border: Border.all(color: AppColors.border),
+          borderRadius: BorderRadius.circular(24)),
+      child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Center(
+                child: Container(
+                    width: 38,
+                    height: 3,
+                    margin: const EdgeInsets.only(bottom: 26),
                     decoration: BoxDecoration(
-                        color: _gradeColor.withValues(alpha: 0.08),
-                        border: Border.all(
-                            color: _gradeColor.withValues(alpha: 0.40),
-                            width: 1.5),
-                        borderRadius: BorderRadius.circular(16)),
-                    child: Center(
-                        child: Text(_grade,
-                            style: AppText.display(36, color: _gradeColor)))),
-              ]),
-              const SizedBox(height: 24),
-              Container(height: 1, color: AppColors.borderSub),
-              const SizedBox(height: 20),
-              Row(children: [
-                _SumTile('MADE', '${widget.made}', AppColors.green),
-                _SumTile('SWISHES', '${widget.swishes}', AppColors.gold),
-                _SumTile('ACCURACY', _pct, _gradeColor),
-                _SumTile('STREAK', '${widget.bestStreak}', AppColors.gold)
-              ]),
-              if (widget.log.isNotEmpty) ...[
-                const SizedBox(height: 22),
-                Text('SHOT LOG',
-                    style: AppText.ui(10,
-                        color: AppColors.text3,
-                        letterSpacing: 1.8,
-                        weight: FontWeight.w700)),
-                const SizedBox(height: 10),
-                Wrap(
-                    spacing: 5,
-                    runSpacing: 5,
-                    children: widget.log
-                        .take(50)
-                        .map((m) => Container(
-                            width: 10,
-                            height: 10,
-                            decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                color: m == ShotResult.swish
-                                    ? AppColors.gold
-                                    : (m == ShotResult.make
-                                        ? AppColors.green
-                                        : AppColors.red))))
-                        .toList()),
-                if (widget.log.length > 50) ...[
-                  const SizedBox(height: 8),
-                  Text('+ ${widget.log.length - 50} more',
-                      style: AppText.ui(10, color: AppColors.text3)),
-                ]
+                        color: AppColors.border,
+                        borderRadius: BorderRadius.circular(2)))),
+            Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Expanded(
+                  child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                    Text('SESSION COMPLETE',
+                        style: AppText.ui(10,
+                            color: AppColors.text3,
+                            letterSpacing: 1.8,
+                            weight: FontWeight.w700)),
+                    const SizedBox(height: 6),
+                    Text(widget.label,
+                        style: AppText.ui(22, weight: FontWeight.w700)),
+                    const SizedBox(height: 4),
+                    Row(children: [
+                      const Icon(Icons.timer_outlined,
+                          size: 13, color: AppColors.text3),
+                      const SizedBox(width: 5),
+                      Text(_time, style: AppText.ui(12, color: AppColors.text3))
+                    ]),
+                  ])),
+              Container(
+                  width: 66,
+                  height: 66,
+                  decoration: BoxDecoration(
+                      color: _gradeColor.withValues(alpha: 0.08),
+                      border: Border.all(
+                          color: _gradeColor.withValues(alpha: 0.40),
+                          width: 1.5),
+                      borderRadius: BorderRadius.circular(16)),
+                  child: Center(
+                      child: Text(_grade,
+                          style: AppText.display(36, color: _gradeColor)))),
+            ]),
+            const SizedBox(height: 24),
+            Container(height: 1, color: AppColors.borderSub),
+            const SizedBox(height: 20),
+            Row(children: [
+              _SumTile('MADE', '${widget.made}', AppColors.green),
+              _SumTile('SWISHES', '${widget.swishes}', AppColors.gold),
+              _SumTile('ACCURACY', _pct, _gradeColor),
+              _SumTile('STREAK', '${widget.bestStreak}', AppColors.gold),
+            ]),
+            if (widget.log.isNotEmpty) ...[
+              const SizedBox(height: 22),
+              Text('SHOT LOG',
+                  style: AppText.ui(10,
+                      color: AppColors.text3,
+                      letterSpacing: 1.8,
+                      weight: FontWeight.w700)),
+              const SizedBox(height: 10),
+              Wrap(
+                  spacing: 5,
+                  runSpacing: 5,
+                  children: widget.log
+                      .take(50)
+                      .map((m) => Container(
+                          width: 10,
+                          height: 10,
+                          decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: m == ShotResult.swish
+                                  ? AppColors.gold
+                                  : (m == ShotResult.make
+                                      ? AppColors.green
+                                      : AppColors.red))))
+                      .toList()),
+              if (widget.log.length > 50) ...[
+                const SizedBox(height: 8),
+                Text('+ ${widget.log.length - 50} more',
+                    style: AppText.ui(10, color: AppColors.text3)),
               ],
-              const SizedBox(height: 32),
-              Row(children: [
-                Expanded(
-                    child: GestureDetector(
-                        onTap: widget.onDiscard,
-                        child: Container(
-                            height: 52,
-                            decoration: BoxDecoration(
-                                color: AppColors.surfaceHi,
-                                borderRadius: BorderRadius.circular(14)),
-                            child: Center(
-                                child: Text('Discard',
-                                    style: AppText.ui(14,
-                                        weight: FontWeight.w700,
-                                        color: AppColors.text2)))))),
-                const SizedBox(width: 14),
-                Expanded(
-                    child: GestureDetector(
-                        onTap: _isSaving ? null : _saveData,
-                        child: Container(
-                            height: 52,
-                            decoration: BoxDecoration(
-                                color: AppColors.gold,
-                                borderRadius: BorderRadius.circular(14)),
-                            child: Center(
-                                child: _isSaving
-                                    ? const SizedBox(
-                                        width: 20,
-                                        height: 20,
-                                        child: CircularProgressIndicator(
-                                            color: AppColors.bg,
-                                            strokeWidth: 2.5),
-                                      )
-                                    : Text('Save Session',
-                                        style: AppText.ui(14,
-                                            weight: FontWeight.w700,
-                                            color: AppColors.bg)))))),
-              ]),
-            ]));
+            ],
+            const SizedBox(height: 32),
+            Row(children: [
+              Expanded(
+                  child: GestureDetector(
+                      onTap: widget.onDiscard,
+                      child: Container(
+                          height: 52,
+                          decoration: BoxDecoration(
+                              color: AppColors.surfaceHi,
+                              borderRadius: BorderRadius.circular(14)),
+                          child: Center(
+                              child: Text('Discard',
+                                  style: AppText.ui(14,
+                                      weight: FontWeight.w700,
+                                      color: AppColors.text2)))))),
+              const SizedBox(width: 14),
+              Expanded(
+                  child: GestureDetector(
+                      onTap: _isSaving ? null : _saveData,
+                      child: Container(
+                          height: 52,
+                          decoration: BoxDecoration(
+                              color: AppColors.gold,
+                              borderRadius: BorderRadius.circular(14)),
+                          child: Center(
+                              child: _isSaving
+                                  ? const SizedBox(
+                                      width: 20,
+                                      height: 20,
+                                      child: CircularProgressIndicator(
+                                          color: AppColors.bg,
+                                          strokeWidth: 2.5))
+                                  : Text('Save Session',
+                                      style: AppText.ui(14,
+                                          weight: FontWeight.w700,
+                                          color: AppColors.bg)))))),
+            ]),
+          ]),
+    );
   }
 }
 
@@ -1036,9 +1098,13 @@ class _SumTile extends StatelessWidget {
             style: AppText.ui(20, weight: FontWeight.w700, color: color)),
         const SizedBox(height: 3),
         Text(label,
-            style: AppText.ui(9, color: AppColors.text3, letterSpacing: 0.8))
+            style: AppText.ui(9, color: AppColors.text3, letterSpacing: 0.8)),
       ]));
 }
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  VOICE TIPS SHEET
+// ═════════════════════════════════════════════════════════════════════════════
 
 class _VoiceTipsSheet extends StatelessWidget {
   const _VoiceTipsSheet();
@@ -1049,54 +1115,59 @@ class _VoiceTipsSheet extends StatelessWidget {
       ('"czysto"', 'Records a swish', AppColors.gold),
       ('"pudło"', 'Records a miss', AppColors.red),
       ('"cofnij"', 'Undoes last shot', AppColors.text2),
-      ('"koniec"', 'Ends the session', AppColors.blue)
+      ('"koniec"', 'Ends the session', AppColors.blue),
     ];
     return Container(
-        margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-        padding: const EdgeInsets.all(26),
-        decoration: BoxDecoration(
-            color: AppColors.surface,
-            border: Border.all(color: AppColors.border),
-            borderRadius: BorderRadius.circular(24)),
-        child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Center(
-                  child: Container(
-                      width: 38,
-                      height: 3,
-                      margin: const EdgeInsets.only(bottom: 22),
+      margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+      padding: const EdgeInsets.all(26),
+      decoration: BoxDecoration(
+          color: AppColors.surface,
+          border: Border.all(color: AppColors.border),
+          borderRadius: BorderRadius.circular(24)),
+      child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Center(
+                child: Container(
+                    width: 38,
+                    height: 3,
+                    margin: const EdgeInsets.only(bottom: 22),
+                    decoration: BoxDecoration(
+                        color: AppColors.border,
+                        borderRadius: BorderRadius.circular(2)))),
+            Text('VOICE COMMANDS',
+                style: AppText.ui(10,
+                    color: AppColors.text3,
+                    letterSpacing: 1.8,
+                    weight: FontWeight.w700)),
+            const SizedBox(height: 18),
+            ...tips.map((t) => Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: Row(children: [
+                  Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 5),
                       decoration: BoxDecoration(
-                          color: AppColors.border,
-                          borderRadius: BorderRadius.circular(2)))),
-              Text('VOICE COMMANDS',
-                  style: AppText.ui(10,
-                      color: AppColors.text3,
-                      letterSpacing: 1.8,
-                      weight: FontWeight.w700)),
-              const SizedBox(height: 18),
-              ...tips.map((t) => Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
-                  child: Row(children: [
-                    Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 10, vertical: 5),
-                        decoration: BoxDecoration(
-                            color: t.$3.withValues(alpha: 0.1),
-                            border:
-                                Border.all(color: t.$3.withValues(alpha: 0.3)),
-                            borderRadius: BorderRadius.circular(8)),
-                        child: Text(t.$1,
-                            style: AppText.ui(13,
-                                weight: FontWeight.w700, color: t.$3))),
-                    const SizedBox(width: 14),
-                    Text(t.$2, style: AppText.ui(14, color: AppColors.text2)),
-                  ]))),
-              const SizedBox(height: 4),
-            ]));
+                          color: t.$3.withValues(alpha: 0.1),
+                          border:
+                              Border.all(color: t.$3.withValues(alpha: 0.3)),
+                          borderRadius: BorderRadius.circular(8)),
+                      child: Text(t.$1,
+                          style: AppText.ui(13,
+                              weight: FontWeight.w700, color: t.$3))),
+                  const SizedBox(width: 14),
+                  Text(t.$2, style: AppText.ui(14, color: AppColors.text2)),
+                ]))),
+            const SizedBox(height: 4),
+          ]),
+    );
   }
 }
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  BACK BUTTON
+// ═════════════════════════════════════════════════════════════════════════════
 
 class _BackBtn extends StatelessWidget {
   final VoidCallback onTap;

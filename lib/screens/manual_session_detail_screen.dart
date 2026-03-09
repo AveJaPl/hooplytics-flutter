@@ -135,10 +135,10 @@ class _ManualSessionDetailScreenState extends State<ManualSessionDetailScreen>
       padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
         gradient: LinearGradient(colors: [
-          s.color.withValues(alpha: 0.18),
-          s.color.withValues(alpha: 0.04)
+          pctColor.withValues(alpha: 0.18),
+          pctColor.withValues(alpha: 0.04)
         ], begin: Alignment.topLeft, end: Alignment.bottomRight),
-        border: Border.all(color: s.color.withValues(alpha: 0.30)),
+        border: Border.all(color: pctColor.withValues(alpha: 0.30)),
         borderRadius: BorderRadius.circular(24),
       ),
       child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [

@@ -2,6 +2,10 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import '../main.dart';
 import '../services/session_service.dart';
+import '../models/session.dart';
+import 'history_screen.dart';
+import 'session_detail_screen.dart';
+import 'manual_session_detail_screen.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  Data model classes (used by painters / widgets)
@@ -22,9 +26,18 @@ class _PosStat {
 }
 
 class _SessionStat {
-  final String zone, timeAgo;
-  final int made, attempts;
-  const _SessionStat(this.zone, this.made, this.attempts, this.timeAgo);
+  final Session session;
+  final String timeAgo;
+  final HoopSession hoopSession;
+
+  _SessionStat(this.session, this.timeAgo)
+      : hoopSession = HistoryEntry.fromSession(session).hoopSession!;
+
+  String? get id => session.id;
+  String get type => session.type;
+  String get zone => session.selectionLabel;
+  int get made => session.made;
+  int get attempts => session.attempts;
   double get pct => attempts > 0 ? made / attempts : 0.0;
 }
 
@@ -161,8 +174,8 @@ class _StatsScreenState extends State<StatsScreen>
 
     final recentSessions = (d['recentSessions'] as List).map((s) {
       final m = s as Map<String, dynamic>;
-      return _SessionStat(m['zone'] as String, m['made'] as int,
-          m['attempts'] as int, m['timeAgo'] as String);
+      return _SessionStat(
+          Session.fromJson(m['session']), m['timeAgo'] as String);
     }).toList();
 
     return SingleChildScrollView(
@@ -710,51 +723,66 @@ class _StatsScreenState extends State<StatsScreen>
                 : AppColors.red;
         return Padding(
           padding: const EdgeInsets.fromLTRB(24, 0, 24, 10),
-          child: Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: AppColors.surface,
-              border: Border.all(color: AppColors.border),
-              borderRadius: BorderRadius.circular(14),
-            ),
-            child: Row(children: [
-              Container(
-                width: 4,
-                height: 44,
-                decoration: BoxDecoration(
-                    color: color, borderRadius: BorderRadius.circular(2)),
+          child: GestureDetector(
+            onTap: () {
+              if (s.id == null) return;
+              if (s.type == 'manual') {
+                Navigator.of(context).push(MaterialPageRoute(
+                  builder: (_) =>
+                      ManualSessionDetailScreen(session: s.hoopSession),
+                ));
+              } else {
+                Navigator.of(context).push(MaterialPageRoute(
+                  builder: (_) => _LiveWrapper(session: s.hoopSession),
+                ));
+              }
+            },
+            child: Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: AppColors.surface,
+                border: Border.all(color: AppColors.border),
+                borderRadius: BorderRadius.circular(14),
               ),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(s.zone,
-                          style: AppText.ui(14, weight: FontWeight.w600)),
-                      const SizedBox(height: 3),
-                      Text(s.timeAgo,
-                          style: AppText.ui(12, color: AppColors.text3)),
-                      const SizedBox(height: 8),
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(2),
-                        child: LinearProgressIndicator(
-                          value: s.pct,
-                          backgroundColor: AppColors.borderSub,
-                          valueColor: AlwaysStoppedAnimation(color),
-                          minHeight: 2,
+              child: Row(children: [
+                Container(
+                  width: 4,
+                  height: 44,
+                  decoration: BoxDecoration(
+                      color: color, borderRadius: BorderRadius.circular(2)),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(s.zone,
+                            style: AppText.ui(14, weight: FontWeight.w600)),
+                        const SizedBox(height: 3),
+                        Text(s.timeAgo,
+                            style: AppText.ui(12, color: AppColors.text3)),
+                        const SizedBox(height: 8),
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(2),
+                          child: LinearProgressIndicator(
+                            value: s.pct,
+                            backgroundColor: AppColors.borderSub,
+                            valueColor: AlwaysStoppedAnimation(color),
+                            minHeight: 2,
+                          ),
                         ),
-                      ),
-                    ]),
-              ),
-              const SizedBox(width: 16),
-              Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-                Text('$pctInt%',
-                    style:
-                        AppText.ui(18, weight: FontWeight.w700, color: color)),
-                Text('${s.made}/${s.attempts}',
-                    style: AppText.ui(11, color: AppColors.text3)),
+                      ]),
+                ),
+                const SizedBox(width: 16),
+                Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+                  Text('$pctInt%',
+                      style: AppText.ui(18,
+                          weight: FontWeight.w700, color: color)),
+                  Text('${s.made}/${s.attempts}',
+                      style: AppText.ui(11, color: AppColors.text3)),
+                ]),
               ]),
-            ]),
+            ),
           ),
         );
       }).toList(),
@@ -1273,6 +1301,8 @@ class _PositionMapPainter extends CustomPainter {
       'Top of Arc': Offset(bx, by - tpR_),
       'Left Elbow': Offset(keyL, ftY),
       'Right Elbow': Offset(keyR, ftY),
+      'Left Block': Offset(keyL + w * 0.042, by + w * 0.072),
+      'Right Block': Offset(keyR - w * 0.042, by + w * 0.072),
       'Left Mid': Offset(keyL - w * 0.12, by - w * 0.13),
       'Right Mid': Offset(keyR + w * 0.12, by - w * 0.13),
     };
@@ -1348,4 +1378,28 @@ class _PositionMapPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_) => false;
+}
+
+// ── Live session wrapper for correct animation ────────────────────────────────
+class _LiveWrapper extends StatefulWidget {
+  final HoopSession session;
+  const _LiveWrapper({required this.session});
+  @override
+  State<_LiveWrapper> createState() => _LiveWrapperState();
+}
+
+class _LiveWrapperState extends State<_LiveWrapper>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _c = AnimationController(
+      vsync: this, duration: const Duration(milliseconds: 600))
+    ..forward();
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) =>
+      SessionDetailScreen(session: widget.session, animation: _c);
 }

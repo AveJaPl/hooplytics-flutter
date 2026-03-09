@@ -276,14 +276,11 @@ class SessionService extends BaseService {
     final lwPct = lwAtt > 0 ? lwMade / lwAtt : 0.0;
     final weekChange = (twPct - lwPct) * 100;
 
-    // ── Recent sessions (last 8 shooting sessions) ──
-    final recentSessions = shootingSessions.take(8).map((s) {
+    // ── Recent sessions (last 5 shooting sessions) ──
+    final recentSessions = shootingSessions.take(5).map((s) {
       return {
-        'zone': s.selectionLabel,
-        'made': s.made,
-        'attempts': s.attempts,
+        'session': s.toJson(),
         'timeAgo': _timeAgo(s.createdAt),
-        'pct': s.attempts > 0 ? s.made / s.attempts : 0.0,
       };
     }).toList();
 
@@ -316,5 +313,34 @@ class SessionService extends BaseService {
     if (diff.inDays == 1) return 'Yesterday';
     if (diff.inDays < 7) return '${diff.inDays} days ago';
     return '${date.day}.${date.month}.${date.year}';
+  }
+
+  /// Fetches aggregate stats for a specific selection ID (zone or position).
+  Future<Map<String, dynamic>> getSelectionStats(
+      String selectionId, String mode) async {
+    final userId = client.auth.currentUser?.id;
+    if (userId == null) throw Exception('No user');
+
+    final response = await client
+        .from('sessions')
+        .select('made, attempts')
+        .eq('user_id', userId)
+        .eq('selection_id', selectionId)
+        .eq('mode', mode)
+        .neq('type', 'game');
+
+    final list = response as List;
+    int totalMade = 0;
+    int totalAttempts = 0;
+
+    for (final row in list) {
+      totalMade += (row['made'] as num).toInt();
+      totalAttempts += (row['attempts'] as num).toInt();
+    }
+
+    return {
+      'made': totalMade,
+      'attempts': totalAttempts,
+    };
   }
 }

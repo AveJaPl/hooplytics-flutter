@@ -5,7 +5,19 @@ import 'history_screen.dart';
 
 // ═════════════════════════════════════════════════════════════════════════════
 //  GAME SESSION DETAIL SCREEN
-//  One screen for all game modes — routes to mode-specific section widgets.
+//
+//  COLOR PHILOSOPHY  (matches session_detail_screen)
+//  ──────────────────────────────────────────────────
+//  e.color  → primary accent used EVERYWHERE:
+//             hero gradient, big numbers, grade, bars, rings, progress arcs.
+//             This is the game-type color set from history — constant.
+//
+//  AppColors.green / red  → ONLY for:
+//    • Shot log dots  (binary make/miss, has legend)
+//    • Tiny delta/winner badges
+//    • Two-player color distinction in Duel & HORSE (intentional by-player ID)
+//
+//  Never use red/gold/green to size or grade a performance number.
 // ═════════════════════════════════════════════════════════════════════════════
 
 class GameSessionDetailScreen extends StatefulWidget {
@@ -17,7 +29,7 @@ class GameSessionDetailScreen extends StatefulWidget {
 
 class _State extends State<GameSessionDetailScreen>
     with SingleTickerProviderStateMixin {
-  late final AnimationController _entry = AnimationController(
+  late final AnimationController _anim = AnimationController(
       vsync: this, duration: const Duration(milliseconds: 500))
     ..forward();
 
@@ -26,20 +38,14 @@ class _State extends State<GameSessionDetailScreen>
 
   @override
   void dispose() {
-    _entry.dispose();
+    _anim.dispose();
     super.dispose();
   }
 
   // ── computed ──────────────────────────────────────────────────────────────
 
-  Color get pctColor {
-    final p = e.pct ?? 0;
-    if (p >= 0.70) return AppColors.green;
-    if (p >= 0.50) return AppColors.gold;
-    return AppColors.red;
-  }
-
-  String get grade {
+  /// Grade letter — rendered in e.color, never green/red
+  String get _grade {
     if (e.pct == null) return '—';
     final p = e.pct!;
     if (p >= 0.85) return 'S';
@@ -49,13 +55,6 @@ class _State extends State<GameSessionDetailScreen>
     return 'D';
   }
 
-  Color get gradeColor {
-    final p = e.pct ?? 0;
-    if (p >= 0.75) return AppColors.green;
-    if (p >= 0.50) return AppColors.gold;
-    return AppColors.red;
-  }
-
   // ── build ─────────────────────────────────────────────────────────────────
 
   @override
@@ -63,7 +62,7 @@ class _State extends State<GameSessionDetailScreen>
     return Scaffold(
       backgroundColor: AppColors.bg,
       body: FadeTransition(
-        opacity: CurvedAnimation(parent: _entry, curve: Curves.easeOut),
+        opacity: CurvedAnimation(parent: _anim, curve: Curves.easeOut),
         child: SafeArea(
             child: Column(children: [
           _topBar(context),
@@ -89,7 +88,9 @@ class _State extends State<GameSessionDetailScreen>
     );
   }
 
-  // ── top bar ───────────────────────────────────────────────────────────────
+  // ══════════════════════════════════════════════════════════════════════════
+  //  TOP BAR
+  // ══════════════════════════════════════════════════════════════════════════
 
   Widget _topBar(BuildContext context) => Padding(
         padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
@@ -121,6 +122,7 @@ class _State extends State<GameSessionDetailScreen>
                         weight: FontWeight.w700)),
                 Text(e.title, style: AppText.ui(15, weight: FontWeight.w700)),
               ])),
+          // Badge uses e.color — consistent with session type
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
             decoration: BoxDecoration(
@@ -133,16 +135,19 @@ class _State extends State<GameSessionDetailScreen>
         ]),
       );
 
-  // ── hero card ─────────────────────────────────────────────────────────────
+  // ══════════════════════════════════════════════════════════════════════════
+  //  HERO CARD
+  //  Big %, grade — all in e.color.  No red/gold/green here.
+  // ══════════════════════════════════════════════════════════════════════════
 
   Widget _heroCard() => Container(
         padding: const EdgeInsets.all(22),
         decoration: BoxDecoration(
             gradient: LinearGradient(colors: [
-              e.color.withValues(alpha: 0.20),
-              e.color.withValues(alpha: 0.05)
+              e.color.withValues(alpha: 0.18),
+              e.color.withValues(alpha: 0.04)
             ], begin: Alignment.topLeft, end: Alignment.bottomRight),
-            border: Border.all(color: e.color.withValues(alpha: 0.32)),
+            border: Border.all(color: e.color.withValues(alpha: 0.30)),
             borderRadius: BorderRadius.circular(22)),
         child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Expanded(
@@ -162,7 +167,8 @@ class _State extends State<GameSessionDetailScreen>
           const SizedBox(width: 16),
           Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
             if (e.pct != null) ...[
-              Text(e.pctStr, style: AppText.display(48, color: pctColor)),
+              // Big % in e.color — not performance color
+              Text(e.pctStr, style: AppText.display(48, color: e.color)),
               Text('${e.made}/${e.attempts}',
                   style: AppText.ui(12, color: AppColors.text2)),
             ] else
@@ -177,22 +183,23 @@ class _State extends State<GameSessionDetailScreen>
                   child: Icon(e.icon, color: e.color, size: 24)),
             const SizedBox(height: 8),
             if (e.pct != null)
+              // Grade badge in e.color
               Container(
                   width: 40,
                   height: 40,
                   decoration: BoxDecoration(
                       borderRadius: BorderRadius.circular(10),
-                      color: gradeColor.withValues(alpha: 0.10),
-                      border: Border.all(
-                          color: gradeColor.withValues(alpha: 0.32))),
+                      color: e.color.withValues(alpha: 0.12),
+                      border:
+                          Border.all(color: e.color.withValues(alpha: 0.30))),
                   child: Center(
-                      child: Text(grade,
-                          style: AppText.display(20, color: gradeColor)))),
+                      child: Text(_grade,
+                          style: AppText.display(20, color: e.color)))),
           ]),
         ]),
       );
 
-  // ── mode content router ───────────────────────────────────────────────────
+  // ── mode router ───────────────────────────────────────────────────────────
 
   List<Widget> _modeContent() {
     switch (g.modeId) {
@@ -221,13 +228,15 @@ class _State extends State<GameSessionDetailScreen>
 
   // ══════════════════════════════════════════════════════════════════════════
   //  3-POINT CONTEST
+  //  Score/progress in e.color.
+  //  Per-rack: use e.color with opacity tiers instead of red/gold/green.
   // ══════════════════════════════════════════════════════════════════════════
 
   List<Widget> _threePointContent() {
     final score = g.stats['score'] as int? ?? 0;
     final maxScore = g.stats['maxScore'] as int? ?? 30;
     final made = g.stats['made'] as int? ?? 0;
-    final rackScores =
+    final racks =
         (g.stats['rackScores'] as List?)?.cast<int>() ?? List.filled(5, 0);
     final pct = maxScore > 0 ? score / maxScore : 0.0;
 
@@ -239,8 +248,8 @@ class _State extends State<GameSessionDetailScreen>
           child: Column(children: [
             Row(children: [
               Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text('$score',
-                    style: AppText.display(64, color: AppColors.gold)),
+                // Score in e.color
+                Text('$score', style: AppText.display(64, color: e.color)),
                 Text('points out of $maxScore',
                     style: AppText.ui(13, color: AppColors.text2)),
               ]),
@@ -258,28 +267,30 @@ class _State extends State<GameSessionDetailScreen>
                 child: LinearProgressIndicator(
                     value: pct,
                     backgroundColor: AppColors.borderSub,
-                    valueColor: const AlwaysStoppedAnimation(AppColors.gold),
+                    valueColor: AlwaysStoppedAnimation(e.color),
                     minHeight: 9)),
             const SizedBox(height: 8),
             Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
               Text('NBA Record: 27 pts (Hodges, 1991)',
                   style: AppText.ui(10, color: AppColors.text3)),
               Text('${(pct * 100).round()}% of max',
-                  style: AppText.ui(10,
-                      color: AppColors.gold, weight: FontWeight.w600)),
+                  style:
+                      AppText.ui(10, color: e.color, weight: FontWeight.w600)),
             ]),
           ])),
       const SizedBox(height: 16),
       _label('RACK BREAKDOWN'),
       Row(
           children: List.generate(5, (i) {
-        final rs = i < rackScores.length ? rackScores[i] : 0;
+        final rs = i < racks.length ? racks[i] : 0;
         final rp = rs / 6.0;
-        final rc = rp >= 0.67
-            ? AppColors.green
+        // Opacity tiers of e.color — no red/gold/green
+        final rAlpha = rp >= 0.67
+            ? 1.0
             : rp >= 0.50
-                ? AppColors.gold
-                : AppColors.red;
+                ? 0.60
+                : 0.35;
+        final rColor = e.color.withValues(alpha: rAlpha);
         return Expanded(
             child: Padding(
           padding: EdgeInsets.only(right: i < 4 ? 8 : 0),
@@ -290,7 +301,7 @@ class _State extends State<GameSessionDetailScreen>
                   border: Border.all(color: AppColors.border),
                   borderRadius: BorderRadius.circular(12)),
               child: Column(children: [
-                Text('$rs', style: AppText.display(26, color: rc)),
+                Text('$rs', style: AppText.display(26, color: rColor)),
                 Text('/6', style: AppText.ui(10, color: AppColors.text3)),
                 const SizedBox(height: 4),
                 Text('R${i + 1}',
@@ -304,19 +315,20 @@ class _State extends State<GameSessionDetailScreen>
                         child: LinearProgressIndicator(
                             value: rp,
                             backgroundColor: AppColors.borderSub,
-                            valueColor: AlwaysStoppedAnimation(rc),
+                            valueColor: AlwaysStoppedAnimation(rColor),
                             minHeight: 3))),
               ])),
         ));
       })),
       const SizedBox(height: 14),
-      _twoStatCompare(
-          'Your Score', '$score pts', 'NBA Avg', '~18 pts', AppColors.gold),
+      _twoStatCompare('Your Score', '$score pts', 'NBA Avg', '~18 pts'),
     ];
   }
 
   // ══════════════════════════════════════════════════════════════════════════
   //  DUEL
+  //  Exception: two-player colors (gold vs blue) are intentional identifiers.
+  //  Winner badge uses a small green tick — acceptable binary indicator.
   // ══════════════════════════════════════════════════════════════════════════
 
   List<Widget> _duelContent() {
@@ -332,6 +344,9 @@ class _State extends State<GameSessionDetailScreen>
     final p1pct = p1a > 0 ? p1m / p1a : 0.0;
     final p2pct = p2a > 0 ? p2m / p2a : 0.0;
     final p1wins = p1pct >= p2pct;
+    // Duel player colors — these are identity colors, not performance colors
+    const c1 = AppColors.gold;
+    const c2 = AppColors.blue;
 
     return [
       _label('RESULT'),
@@ -339,27 +354,24 @@ class _State extends State<GameSessionDetailScreen>
           padding: const EdgeInsets.symmetric(vertical: 20),
           decoration: BoxDecoration(
               gradient: LinearGradient(colors: [
-                AppColors.gold.withValues(alpha: 0.16),
-                AppColors.gold.withValues(alpha: 0.03)
+                e.color.withValues(alpha: 0.15),
+                e.color.withValues(alpha: 0.03)
               ], begin: Alignment.topLeft, end: Alignment.bottomRight),
-              border: Border.all(color: AppColors.gold.withValues(alpha: 0.28)),
+              border: Border.all(color: e.color.withValues(alpha: 0.27)),
               borderRadius: BorderRadius.circular(18)),
           child: Center(
               child:
                   Row(mainAxisAlignment: MainAxisAlignment.center, children: [
             const Text('🏆 ', style: TextStyle(fontSize: 24)),
             Text('$win wins!',
-                style: AppText.ui(22,
-                    weight: FontWeight.w800, color: AppColors.gold)),
+                style: AppText.ui(22, weight: FontWeight.w800, color: e.color)),
           ]))),
       const SizedBox(height: 16),
       _label('HEAD TO HEAD'),
       Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Expanded(
-            child: _playerCard(p1n, p1m, p1a, p1log, AppColors.gold, p1wins)),
+        Expanded(child: _playerCard(p1n, p1m, p1a, p1log, c1, p1wins)),
         const SizedBox(width: 12),
-        Expanded(
-            child: _playerCard(p2n, p2m, p2a, p2log, AppColors.blue, !p1wins)),
+        Expanded(child: _playerCard(p2n, p2m, p2a, p2log, c2, !p1wins)),
       ]),
       const SizedBox(height: 16),
       _label('ACCURACY COMPARISON'),
@@ -367,9 +379,9 @@ class _State extends State<GameSessionDetailScreen>
           padding: const EdgeInsets.all(20),
           decoration: _box(),
           child: Column(children: [
-            _accBar(p1n, p1pct, AppColors.gold),
+            _accBar(p1n, p1pct, c1),
             const SizedBox(height: 12),
-            _accBar(p2n, p2pct, AppColors.blue),
+            _accBar(p2n, p2pct, c2),
           ])),
     ];
   }
@@ -403,6 +415,7 @@ class _State extends State<GameSessionDetailScreen>
               style: AppText.display(34, color: color)),
           Text('$made/$att', style: AppText.ui(11, color: AppColors.text3)),
           const SizedBox(height: 10),
+          // Shot dots: green=made / dim=missed — binary legend, acceptable
           Wrap(
               spacing: 4,
               runSpacing: 4,
@@ -412,15 +425,14 @@ class _State extends State<GameSessionDetailScreen>
                       height: 9,
                       decoration: BoxDecoration(
                           shape: BoxShape.circle,
-                          color: m
-                              ? AppColors.green
-                              : AppColors.red.withValues(alpha: 0.45))))
+                          color: m ? AppColors.green : AppColors.surfaceHi)))
                   .toList()),
         ]));
   }
 
   // ══════════════════════════════════════════════════════════════════════════
   //  H-O-R-S-E
+  //  Two-player letter colors intentional (identity not performance).
   // ══════════════════════════════════════════════════════════════════════════
 
   List<Widget> _horseContent() {
@@ -439,18 +451,16 @@ class _State extends State<GameSessionDetailScreen>
           padding: const EdgeInsets.all(22),
           decoration: BoxDecoration(
               gradient: LinearGradient(colors: [
-                const Color(0xFFAA5EEF).withValues(alpha: 0.18),
-                const Color(0xFFAA5EEF).withValues(alpha: 0.04)
+                e.color.withValues(alpha: 0.16),
+                e.color.withValues(alpha: 0.04)
               ], begin: Alignment.topLeft, end: Alignment.bottomRight),
-              border: Border.all(
-                  color: const Color(0xFFAA5EEF).withValues(alpha: 0.30)),
+              border: Border.all(color: e.color.withValues(alpha: 0.28)),
               borderRadius: BorderRadius.circular(20)),
           child: Column(children: [
             const Text('🎯', style: TextStyle(fontSize: 40)),
             const SizedBox(height: 10),
             Text('$win wins!',
-                style: AppText.ui(24,
-                    weight: FontWeight.w800, color: const Color(0xFFAA5EEF))),
+                style: AppText.ui(24, weight: FontWeight.w800, color: e.color)),
             const SizedBox(height: 4),
             Text('$loser spells H-O-R-S-E',
                 style: AppText.ui(14, color: AppColors.text2)),
@@ -461,6 +471,7 @@ class _State extends State<GameSessionDetailScreen>
       const SizedBox(height: 16),
       _label('LETTERS'),
       Row(children: [
+        // P1 = e.color letters (earned = lit, unearned = dim)
         Expanded(
             child: Container(
                 padding: const EdgeInsets.all(16),
@@ -480,14 +491,15 @@ class _State extends State<GameSessionDetailScreen>
                               child: Text(word[i],
                                   style: AppText.display(26,
                                       color: i < p1l
-                                          ? const Color(0xFFAA5EEF)
+                                          ? e.color
                                           : AppColors.text3
-                                              .withValues(alpha: 0.20)))))),
+                                              .withValues(alpha: 0.18)))))),
                   const SizedBox(height: 6),
                   Text('$p1l / 5 letters',
                       style: AppText.ui(10, color: AppColors.text3)),
                 ]))),
         const SizedBox(width: 12),
+        // P2 = neutral (opponent), earned letters in text2
         Expanded(
             child: Container(
                 padding: const EdgeInsets.all(16),
@@ -507,9 +519,9 @@ class _State extends State<GameSessionDetailScreen>
                               child: Text(word[i],
                                   style: AppText.display(26,
                                       color: i < p2l
-                                          ? const Color(0xFFFF7A5C)
+                                          ? AppColors.text2
                                           : AppColors.text3
-                                              .withValues(alpha: 0.20)))))),
+                                              .withValues(alpha: 0.18)))))),
                   const SizedBox(height: 6),
                   Text('$p2l / 5 letters',
                       style: AppText.ui(10, color: AppColors.text3)),
@@ -522,18 +534,13 @@ class _State extends State<GameSessionDetailScreen>
 
   // ══════════════════════════════════════════════════════════════════════════
   //  BEAT THE CLOCK
+  //  All stats in e.color / neutral. Removed dynamic pc2 color.
   // ══════════════════════════════════════════════════════════════════════════
 
   List<Widget> _btcContent() {
     final made = g.stats['made'] as int? ?? 0;
     final att = g.stats['attempts'] as int? ?? 0;
     final pct = att > 0 ? made / att : 0.0;
-    final pc = att > 0 ? pct : 0.0;
-    final pc2 = att > 30
-        ? AppColors.green
-        : att > 20
-            ? AppColors.gold
-            : AppColors.red;
 
     return [
       _label('60-SECOND RESULTS'),
@@ -542,18 +549,12 @@ class _State extends State<GameSessionDetailScreen>
           decoration: _box(),
           child: Column(children: [
             Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
-              _bigStat('$made', 'MADE', AppColors.green),
+              // MADE and ACC both use e.color — no performance-based coloring
+              _bigStat('$made', 'MADE', e.color),
               _vDiv(),
               _bigStat('$att', 'SHOTS', AppColors.text1),
               _vDiv(),
-              _bigStat(
-                  '${(pc * 100).round()}%',
-                  'ACC',
-                  pc >= 0.70
-                      ? AppColors.green
-                      : pc >= 0.50
-                          ? AppColors.gold
-                          : AppColors.red),
+              _bigStat('${(pct * 100).round()}%', 'ACC', e.color),
             ]),
             const SizedBox(height: 18),
             const Divider(height: 1, color: AppColors.borderSub),
@@ -571,22 +572,23 @@ class _State extends State<GameSessionDetailScreen>
                         child: LinearProgressIndicator(
                             value: (att / 50).clamp(0, 1),
                             backgroundColor: AppColors.borderSub,
-                            valueColor: AlwaysStoppedAnimation(pc2),
+                            valueColor: AlwaysStoppedAnimation(e.color),
                             minHeight: 6)),
                   ])),
               const SizedBox(width: 16),
               Text('$att / 60s',
-                  style: AppText.ui(14, weight: FontWeight.w700, color: pc2)),
+                  style:
+                      AppText.ui(14, weight: FontWeight.w700, color: e.color)),
             ]),
           ])),
       const SizedBox(height: 14),
-      _twoStatCompare('Your shots', '$att shots', 'Target', '30+ shots',
-          const Color(0xFFFF7A5C)),
+      _twoStatCompare('Your shots', '$att shots', 'Target', '30+ shots'),
     ];
   }
 
   // ══════════════════════════════════════════════════════════════════════════
   //  STREAK MODE
+  //  Streak number uses e.color. Removed red streak icon.
   // ══════════════════════════════════════════════════════════════════════════
 
   List<Widget> _streakContent() {
@@ -607,16 +609,17 @@ class _State extends State<GameSessionDetailScreen>
                   height: 56,
                   decoration: BoxDecoration(
                       shape: BoxShape.circle,
-                      color: AppColors.red.withValues(alpha: 0.12),
-                      border: Border.all(
-                          color: AppColors.red.withValues(alpha: 0.25))),
-                  child: const Icon(Icons.local_fire_department_rounded,
-                      color: AppColors.red, size: 28)),
+                      color: e.color.withValues(alpha: 0.12),
+                      border:
+                          Border.all(color: e.color.withValues(alpha: 0.25))),
+                  child: Icon(Icons.local_fire_department_rounded,
+                      color: e.color, size: 28)),
               const SizedBox(width: 16),
               Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 Text('Best Streak',
                     style: AppText.ui(12, color: AppColors.text2)),
-                Text('$best', style: AppText.display(52, color: AppColors.red)),
+                // Streak number in e.color
+                Text('$best', style: AppText.display(52, color: e.color)),
                 Text('consecutive makes',
                     style: AppText.ui(11, color: AppColors.text3)),
               ]),
@@ -625,18 +628,11 @@ class _State extends State<GameSessionDetailScreen>
             const Divider(height: 1, color: AppColors.borderSub),
             const SizedBox(height: 16),
             Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
-              _bigStat('$made', 'MADE', AppColors.green),
+              _bigStat('$made', 'MADE', e.color),
               _vDiv(),
               _bigStat('$total', 'SHOTS', AppColors.text1),
               _vDiv(),
-              _bigStat(
-                  '${(pct * 100).round()}%',
-                  'ACC',
-                  pct >= 0.70
-                      ? AppColors.green
-                      : pct >= 0.50
-                          ? AppColors.gold
-                          : AppColors.red),
+              _bigStat('${(pct * 100).round()}%', 'ACC', e.color),
             ]),
             if (best >= 10) ...[
               const SizedBox(height: 14),
@@ -644,15 +640,15 @@ class _State extends State<GameSessionDetailScreen>
                   padding:
                       const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
                   decoration: BoxDecoration(
-                      color: AppColors.gold.withValues(alpha: 0.08),
+                      color: e.color.withValues(alpha: 0.07),
                       borderRadius: BorderRadius.circular(10),
-                      border: Border.all(
-                          color: AppColors.gold.withValues(alpha: 0.20))),
+                      border:
+                          Border.all(color: e.color.withValues(alpha: 0.18))),
                   child: Row(children: [
                     const Text('⭐ ', style: TextStyle(fontSize: 14)),
                     Expanded(
                         child: Text('$best+ streak — elite consistency!',
-                            style: AppText.ui(12, color: AppColors.gold)))
+                            style: AppText.ui(12, color: e.color))),
                   ])),
             ],
           ])),
@@ -661,6 +657,7 @@ class _State extends State<GameSessionDetailScreen>
 
   // ══════════════════════════════════════════════════════════════════════════
   //  PRESSURE FREE THROWS
+  //  Level indicators and bars all in e.color.
   // ══════════════════════════════════════════════════════════════════════════
 
   List<Widget> _pressureFtContent() {
@@ -673,7 +670,7 @@ class _State extends State<GameSessionDetailScreen>
 
     return [
       if (done) ...[
-        _completedBanner('All 5 Levels Cleared! 🏆', AppColors.green),
+        _completedBanner('All $total Levels Cleared! 🏆'),
         const SizedBox(height: 14),
       ],
       _label('LEVEL PROGRESS'),
@@ -691,17 +688,17 @@ class _State extends State<GameSessionDetailScreen>
                           padding: const EdgeInsets.symmetric(vertical: 14),
                           decoration: BoxDecoration(
                               color: d
-                                  ? AppColors.blue.withValues(alpha: 0.12)
+                                  ? e.color.withValues(alpha: 0.12)
                                   : AppColors.bg,
                               border: Border.all(
                                   color: d
-                                      ? AppColors.blue.withValues(alpha: 0.35)
+                                      ? e.color.withValues(alpha: 0.32)
                                       : AppColors.border),
                               borderRadius: BorderRadius.circular(10)),
                           child: Center(
                               child: d
-                                  ? const Icon(Icons.check_rounded,
-                                      size: 18, color: AppColors.blue)
+                                  ? Icon(Icons.check_rounded,
+                                      size: 18, color: e.color)
                                   : Text('${i + 1}',
                                       style: AppText.display(18,
                                           color: AppColors.text3))))));
@@ -712,22 +709,15 @@ class _State extends State<GameSessionDetailScreen>
                 child: LinearProgressIndicator(
                     value: levels / total,
                     backgroundColor: AppColors.borderSub,
-                    valueColor: const AlwaysStoppedAnimation(AppColors.blue),
+                    valueColor: AlwaysStoppedAnimation(e.color),
                     minHeight: 6)),
             const SizedBox(height: 16),
             Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
-              _bigStat('$levels/$total', 'LEVELS', AppColors.blue),
+              _bigStat('$levels/$total', 'LEVELS', e.color),
               _vDiv(),
-              _bigStat('$made', 'MADE', AppColors.green),
+              _bigStat('$made', 'MADE', e.color),
               _vDiv(),
-              _bigStat(
-                  '${(pct * 100).round()}%',
-                  'ACC',
-                  pct >= 0.70
-                      ? AppColors.green
-                      : pct >= 0.50
-                          ? AppColors.gold
-                          : AppColors.red),
+              _bigStat('${(pct * 100).round()}%', 'ACC', e.color),
             ]),
           ])),
     ];
@@ -735,6 +725,8 @@ class _State extends State<GameSessionDetailScreen>
 
   // ══════════════════════════════════════════════════════════════════════════
   //  HOT SPOT
+  //  Per-spot bars: e.color with opacity gradient (stronger = more opaque).
+  //  Avoids per-spot red/gold/green while still showing relative performance.
   // ══════════════════════════════════════════════════════════════════════════
 
   List<Widget> _hotSpotContent() {
@@ -758,11 +750,9 @@ class _State extends State<GameSessionDetailScreen>
               final spotMade =
                   (made / 5 * (0.6 + en.key * 0.09)).round().clamp(0, 10);
               final sp = spotMade / 10.0;
-              final sc = sp >= 0.7
-                  ? AppColors.green
-                  : sp >= 0.5
-                      ? AppColors.gold
-                      : AppColors.red;
+              // Opacity tier of e.color — no red/gold/green
+              final alpha = 0.35 + sp * 0.65; // 0.35 → 1.0 based on performance
+              final spotColor = e.color.withValues(alpha: alpha);
               return Padding(
                   padding: const EdgeInsets.only(bottom: 12),
                   child: Row(children: [
@@ -771,13 +761,14 @@ class _State extends State<GameSessionDetailScreen>
                         height: 30,
                         decoration: BoxDecoration(
                             shape: BoxShape.circle,
-                            color: sc.withValues(alpha: 0.12),
-                            border:
-                                Border.all(color: sc.withValues(alpha: 0.30))),
+                            color: e.color.withValues(alpha: sp * 0.15),
+                            border: Border.all(
+                                color: e.color.withValues(alpha: sp * 0.35))),
                         child: Center(
                             child: Text('${en.key + 1}',
                                 style: AppText.ui(11,
-                                    weight: FontWeight.w700, color: sc)))),
+                                    weight: FontWeight.w700,
+                                    color: spotColor)))),
                     const SizedBox(width: 10),
                     Expanded(
                         child: Column(
@@ -791,7 +782,8 @@ class _State extends State<GameSessionDetailScreen>
                                         weight: FontWeight.w600)),
                                 Text('$spotMade/10',
                                     style: AppText.ui(12,
-                                        weight: FontWeight.w700, color: sc)),
+                                        weight: FontWeight.w700,
+                                        color: spotColor)),
                               ]),
                           const SizedBox(height: 5),
                           ClipRRect(
@@ -799,19 +791,20 @@ class _State extends State<GameSessionDetailScreen>
                               child: LinearProgressIndicator(
                                   value: sp,
                                   backgroundColor: AppColors.borderSub,
-                                  valueColor: AlwaysStoppedAnimation(sc),
+                                  valueColor: AlwaysStoppedAnimation(spotColor),
                                   minHeight: 5)),
                         ])),
                   ]));
             }).toList(),
           )),
       const SizedBox(height: 14),
-      _twoStatCompare('Total made', '$made', 'Total shots', '$att', e.color),
+      _twoStatCompare('Total made', '$made', 'Total shots', '$att'),
     ];
   }
 
   // ══════════════════════════════════════════════════════════════════════════
   //  AROUND THE WORLD
+  //  Cleared spot indicators in e.color.
   // ══════════════════════════════════════════════════════════════════════════
 
   List<Widget> _atwContent() {
@@ -832,7 +825,7 @@ class _State extends State<GameSessionDetailScreen>
 
     return [
       if (completed) ...[
-        _completedBanner('Around the World Complete! 🌍', AppColors.green),
+        _completedBanner('Around the World Complete! 🌍'),
         const SizedBox(height: 14)
       ],
       _label('SPOT PROGRESS'),
@@ -852,16 +845,16 @@ class _State extends State<GameSessionDetailScreen>
                         decoration: BoxDecoration(
                             shape: BoxShape.circle,
                             color: d
-                                ? AppColors.green.withValues(alpha: 0.14)
+                                ? e.color.withValues(alpha: 0.14)
                                 : AppColors.borderSub.withValues(alpha: 0.5),
                             border: Border.all(
                                 color: d
-                                    ? AppColors.green.withValues(alpha: 0.45)
+                                    ? e.color.withValues(alpha: 0.42)
                                     : AppColors.border)),
                         child: Center(
                             child: d
-                                ? const Icon(Icons.check_rounded,
-                                    size: 16, color: AppColors.green)
+                                ? Icon(Icons.check_rounded,
+                                    size: 16, color: e.color)
                                 : Text('${i + 1}',
                                     style: AppText.ui(11,
                                         color: AppColors.text3,
@@ -881,14 +874,14 @@ class _State extends State<GameSessionDetailScreen>
                 child: LinearProgressIndicator(
                     value: cleared / total,
                     backgroundColor: AppColors.borderSub,
-                    valueColor: const AlwaysStoppedAnimation(AppColors.green),
+                    valueColor: AlwaysStoppedAnimation(e.color),
                     minHeight: 7)),
             const SizedBox(height: 8),
             Text('$cleared of $total spots completed',
                 style: AppText.ui(12, color: AppColors.text3)),
           ])),
       const SizedBox(height: 14),
-      _twoStatCompare('Makes', '$made', 'Attempts', '$att', AppColors.green),
+      _twoStatCompare('Makes', '$made', 'Attempts', '$att'),
     ];
   }
 
@@ -909,7 +902,7 @@ class _State extends State<GameSessionDetailScreen>
             Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
               _bigStat('$reps', 'REPS', e.color),
               _vDiv(),
-              _bigStat('$made', 'MAKES', AppColors.green),
+              _bigStat('$made', 'MAKES', e.color),
               _vDiv(),
               _bigStat('20', 'TARGET', AppColors.text3),
             ]),
@@ -941,16 +934,16 @@ class _State extends State<GameSessionDetailScreen>
         padding: const EdgeInsets.all(20),
         decoration: _box(),
         child: Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
-          _bigStat('${e.made}', 'MADE', AppColors.green),
+          _bigStat('${e.made}', 'MADE', e.color),
           _vDiv(),
           _bigStat('${e.attempts}', 'ATTEMPTS', AppColors.text1),
           _vDiv(),
-          _bigStat(e.pctStr, 'ACC', pctColor),
+          _bigStat(e.pctStr, 'ACC', e.color),
         ]));
   }
 
   // ══════════════════════════════════════════════════════════════════════════
-  //  ACCURACY PROGRESSION (shot log → running average line)
+  //  ACCURACY PROGRESSION  —  e.color line
   // ══════════════════════════════════════════════════════════════════════════
 
   Widget _accuracyProgression() {
@@ -975,6 +968,7 @@ class _State extends State<GameSessionDetailScreen>
 
   // ══════════════════════════════════════════════════════════════════════════
   //  SHOT LOG DOTS
+  //  green=made / dim=missed with legend — only place green appears outside Duel.
   // ══════════════════════════════════════════════════════════════════════════
 
   Widget _shotLogSection() {
@@ -997,9 +991,7 @@ class _State extends State<GameSessionDetailScreen>
                         height: 12,
                         decoration: BoxDecoration(
                             shape: BoxShape.circle,
-                            color: m
-                                ? AppColors.green
-                                : AppColors.red.withValues(alpha: 0.45))))
+                            color: m ? AppColors.green : AppColors.surfaceHi)))
                     .toList()),
             const SizedBox(height: 14),
             Row(mainAxisAlignment: MainAxisAlignment.center, children: [
@@ -1014,9 +1006,8 @@ class _State extends State<GameSessionDetailScreen>
               Container(
                   width: 10,
                   height: 10,
-                  decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: AppColors.red.withValues(alpha: 0.45))),
+                  decoration: const BoxDecoration(
+                      shape: BoxShape.circle, color: AppColors.surfaceHi)),
               const SizedBox(width: 6),
               Text('$missed missed',
                   style: AppText.ui(11, color: AppColors.text2)),
@@ -1056,7 +1047,7 @@ class _State extends State<GameSessionDetailScreen>
       child: Row(mainAxisSize: MainAxisSize.min, children: [
         Icon(icon, size: 11, color: AppColors.text3),
         const SizedBox(width: 5),
-        Text(label, style: AppText.ui(11, color: AppColors.text2))
+        Text(label, style: AppText.ui(11, color: AppColors.text2)),
       ]));
 
   Widget _bigStat(String v, String l, Color c) => Column(children: [
@@ -1098,11 +1089,11 @@ class _State extends State<GameSessionDetailScreen>
         Flexible(
             child: Text(value,
                 style: AppText.ui(13, weight: FontWeight.w600),
-                overflow: TextOverflow.ellipsis))
+                overflow: TextOverflow.ellipsis)),
       ]));
 
-  Widget _twoStatCompare(
-          String l1, String v1, String l2, String v2, Color color) =>
+  /// Comparison row — left value in e.color, right in neutral text2
+  Widget _twoStatCompare(String l1, String v1, String l2, String v2) =>
       Container(
           padding: const EdgeInsets.all(16),
           decoration: _box(),
@@ -1114,8 +1105,8 @@ class _State extends State<GameSessionDetailScreen>
                   Text(l1, style: AppText.ui(10, color: AppColors.text3)),
                   const SizedBox(height: 4),
                   Text(v1,
-                      style:
-                          AppText.ui(18, weight: FontWeight.w800, color: color))
+                      style: AppText.ui(18,
+                          weight: FontWeight.w800, color: e.color)),
                 ])),
             Container(
                 width: 1,
@@ -1130,20 +1121,21 @@ class _State extends State<GameSessionDetailScreen>
                   const SizedBox(height: 4),
                   Text(v2,
                       style: AppText.ui(18,
-                          weight: FontWeight.w800, color: AppColors.text2))
+                          weight: FontWeight.w800, color: AppColors.text2)),
                 ])),
           ]));
 
-  Widget _completedBanner(String text, Color color) => Container(
+  Widget _completedBanner(String text) => Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       decoration: BoxDecoration(
-          color: color.withValues(alpha: 0.08),
-          border: Border.all(color: color.withValues(alpha: 0.28)),
+          color: e.color.withValues(alpha: 0.08),
+          border: Border.all(color: e.color.withValues(alpha: 0.26)),
           borderRadius: BorderRadius.circular(12)),
       child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-        Icon(Icons.military_tech_rounded, color: color, size: 18),
+        Icon(Icons.military_tech_rounded, color: e.color, size: 18),
         const SizedBox(width: 8),
-        Text(text, style: AppText.ui(13, weight: FontWeight.w700, color: color))
+        Text(text,
+            style: AppText.ui(13, weight: FontWeight.w700, color: e.color)),
       ]));
 
   String _timeStr(Duration d) {
@@ -1153,7 +1145,9 @@ class _State extends State<GameSessionDetailScreen>
   }
 }
 
-// ── Line chart painter ────────────────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════════════════════
+//  LINE CHART PAINTER
+// ═════════════════════════════════════════════════════════════════════════════
 
 class _LinePainter extends CustomPainter {
   final List<double> points;
@@ -1165,8 +1159,7 @@ class _LinePainter extends CustomPainter {
     if (points.length < 2) return;
     final n = points.length;
     final dx = size.width / (n - 1);
-    final path = Path();
-    final fill = Path();
+    final path = Path(), fill = Path();
 
     for (int i = 0; i < n; i++) {
       final x = i * dx, y = size.height * (1 - points[i]);
@@ -1187,7 +1180,6 @@ class _LinePainter extends CustomPainter {
     fill.lineTo(size.width, size.height);
     fill.close();
 
-    // avg reference line
     final avg = points.reduce((a, b) => a + b) / n;
     canvas.drawLine(
         Offset(0, size.height * (1 - avg)),
@@ -1197,23 +1189,19 @@ class _LinePainter extends CustomPainter {
           ..strokeWidth = 1
           ..style = PaintingStyle.stroke);
 
-    // fill
     canvas.drawPath(
         fill,
         Paint()
           ..shader = LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              colors: [
-                color.withValues(alpha: 0.25),
-                color.withValues(alpha: 0)
-              ]).createShader(Rect.fromLTWH(0, 0, size.width, size.height)));
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [color.withValues(alpha: 0.22), color.withValues(alpha: 0)],
+          ).createShader(Rect.fromLTWH(0, 0, size.width, size.height)));
 
-    // glow + line
     canvas.drawPath(
         path,
         Paint()
-          ..color = color.withValues(alpha: 0.22)
+          ..color = color.withValues(alpha: 0.20)
           ..style = PaintingStyle.stroke
           ..strokeWidth = 8
           ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4));
@@ -1226,14 +1214,13 @@ class _LinePainter extends CustomPainter {
           ..strokeCap = StrokeCap.round
           ..strokeJoin = StrokeJoin.round);
 
-    // last dot
     final lx = (n - 1) * dx, ly = size.height * (1 - points.last);
-    canvas.drawCircle(Offset(lx, ly), 5, Paint()..color = color);
+    canvas.drawCircle(Offset(lx, ly), 4.5, Paint()..color = color);
     canvas.drawCircle(
         Offset(lx, ly),
-        5,
+        4.5,
         Paint()
-          ..color = Colors.white.withValues(alpha: 0.4)
+          ..color = Colors.white.withValues(alpha: 0.35)
           ..style = PaintingStyle.stroke
           ..strokeWidth = 1.5);
   }

@@ -340,11 +340,11 @@ class _HistoryScreenState extends State<HistoryScreen>
             border: Border.all(color: AppColors.borderSub),
             borderRadius: BorderRadius.circular(12)),
         child: Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
-          _stripStat('$live', 'Training', AppColors.green),
+          _stripStat('$live', 'Training', AppColors.blue),
           Container(width: 1, height: 28, color: AppColors.borderSub),
           _stripStat('$games', 'Games', AppColors.gold),
           Container(width: 1, height: 28, color: AppColors.borderSub),
-          _stripStat('$manual', 'Manual', AppColors.blue),
+          _stripStat('$manual', 'Manual', AppColors.green),
         ]),
       ),
     );
@@ -559,14 +559,9 @@ class _SessionCardState extends State<_SessionCard>
                             const SizedBox(width: 7),
                             _TypeBadge(e.type),
                           ]),
-                          const SizedBox(height: 3),
                           Text(e.subtitle,
                               style: AppText.ui(11, color: AppColors.text3),
                               overflow: TextOverflow.ellipsis),
-                          if (e.shotLog != null && e.shotLog!.isNotEmpty) ...[
-                            const SizedBox(height: 7),
-                            _MiniDots(log: e.shotLog!),
-                          ],
                         ])),
                     const SizedBox(width: 10),
                     // Right stats
@@ -607,8 +602,8 @@ class _TypeBadge extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final (label, color) = switch (type) {
-      SessionType.live => ('LIVE', AppColors.green),
-      SessionType.manual => ('MANUAL', AppColors.blue),
+      SessionType.live => ('LIVE', AppColors.blue),
+      SessionType.manual => ('MANUAL', AppColors.green),
       SessionType.game => ('GAME', AppColors.gold),
     };
     return Container(
@@ -620,29 +615,5 @@ class _TypeBadge extends StatelessWidget {
         child: Text(label,
             style: AppText.ui(8,
                 weight: FontWeight.w800, color: color, letterSpacing: 0.6)));
-  }
-}
-
-// ── Mini dot row ──────────────────────────────────────────────────────────────
-
-class _MiniDots extends StatelessWidget {
-  final List<bool> log;
-  const _MiniDots({required this.log});
-  @override
-  Widget build(BuildContext context) {
-    final recent = log.length > 20 ? log.sublist(log.length - 20) : log;
-    return Row(
-        children: recent
-            .map((m) => Container(
-                  width: 6,
-                  height: 6,
-                  margin: const EdgeInsets.only(right: 3),
-                  decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: m
-                          ? AppColors.green.withValues(alpha: 0.8)
-                          : AppColors.red.withValues(alpha: 0.35)),
-                ))
-            .toList());
   }
 }
