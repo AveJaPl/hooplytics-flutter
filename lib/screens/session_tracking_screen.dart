@@ -42,6 +42,7 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
 
   final Stopwatch _sw = Stopwatch();
   Timer? _ticker;
+  Timer? _restartTimer; // ZMIANA: Timer do bezpiecznego restartu mikrofonu
 
   // ── Speech-to-text ────────────────────────────────────────────────────────
   final SpeechToText _speech = SpeechToText();
@@ -66,25 +67,35 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
   late final AnimationController _missPressCtrl = AnimationController(
       vsync: this, duration: const Duration(milliseconds: 260));
 
-  late final Animation<double> _makePressScale = TweenSequence([
-    TweenSequenceItem(tween: Tween(begin: 1.0, end: 0.94), weight: 35),
-    TweenSequenceItem(tween: Tween(begin: 0.94, end: 1.02), weight: 40),
-    TweenSequenceItem(tween: Tween(begin: 1.02, end: 1.0), weight: 25),
+  // ZMIANA: Rygorystyczne typowanie <double> w animacjach
+  late final Animation<double> _makePressScale = TweenSequence<double>([
+    TweenSequenceItem<double>(
+        tween: Tween<double>(begin: 1.0, end: 0.94), weight: 35),
+    TweenSequenceItem<double>(
+        tween: Tween<double>(begin: 0.94, end: 1.02), weight: 40),
+    TweenSequenceItem<double>(
+        tween: Tween<double>(begin: 1.02, end: 1.0), weight: 25),
   ]).animate(CurvedAnimation(parent: _makePressCtrl, curve: Curves.easeOut));
 
-  late final Animation<double> _missPressScale = TweenSequence([
-    TweenSequenceItem(tween: Tween(begin: 1.0, end: 0.94), weight: 35),
-    TweenSequenceItem(tween: Tween(begin: 0.94, end: 1.02), weight: 40),
-    TweenSequenceItem(tween: Tween(begin: 1.02, end: 1.0), weight: 25),
+  late final Animation<double> _missPressScale = TweenSequence<double>([
+    TweenSequenceItem<double>(
+        tween: Tween<double>(begin: 1.0, end: 0.94), weight: 35),
+    TweenSequenceItem<double>(
+        tween: Tween<double>(begin: 0.94, end: 1.02), weight: 40),
+    TweenSequenceItem<double>(
+        tween: Tween<double>(begin: 1.02, end: 1.0), weight: 25),
   ]).animate(CurvedAnimation(parent: _missPressCtrl, curve: Curves.easeOut));
 
   late final AnimationController _swishPressCtrl = AnimationController(
       vsync: this, duration: const Duration(milliseconds: 260));
 
-  late final Animation<double> _swishPressScale = TweenSequence([
-    TweenSequenceItem(tween: Tween(begin: 1.0, end: 0.94), weight: 35),
-    TweenSequenceItem(tween: Tween(begin: 0.94, end: 1.02), weight: 40),
-    TweenSequenceItem(tween: Tween(begin: 1.02, end: 1.0), weight: 25),
+  late final Animation<double> _swishPressScale = TweenSequence<double>([
+    TweenSequenceItem<double>(
+        tween: Tween<double>(begin: 1.0, end: 0.94), weight: 35),
+    TweenSequenceItem<double>(
+        tween: Tween<double>(begin: 0.94, end: 1.02), weight: 40),
+    TweenSequenceItem<double>(
+        tween: Tween<double>(begin: 1.02, end: 1.0), weight: 25),
   ]).animate(CurvedAnimation(parent: _swishPressCtrl, curve: Curves.easeOut));
 
   late final AnimationController _voiceCtrl = AnimationController(
@@ -130,10 +141,8 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
     _speechAvailable = await _speech.initialize(
       onStatus: _onSpeechStatus,
       onError: (e) {
-        // iOS fires errors when session ends naturally — just restart
-        if (_voiceOn && mounted) {
-          Future.delayed(const Duration(milliseconds: 150), _startListening);
-        }
+        // ZMIANA: bezpieczny restart po błędzie ciszy
+        _scheduleListenRestart();
       },
     );
     if (mounted) setState(() {});
@@ -142,6 +151,7 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
   @override
   void dispose() {
     _ticker?.cancel();
+    _restartTimer?.cancel(); // ZMIANA: sprzątanie Timera
     _sw.stop();
     _speech.stop();
     _flashCtrl.dispose();
@@ -167,12 +177,13 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
       _flashText = swish ? '+ SWISH' : '+ MADE';
       _flashColor = swish ? AppColors.gold : AppColors.green;
     });
+    // ZMIANA: forward(from: 0.0) zamiast 0
     if (swish) {
-      _swishPressCtrl.forward(from: 0);
+      _swishPressCtrl.forward(from: 0.0);
     } else {
-      _makePressCtrl.forward(from: 0);
+      _makePressCtrl.forward(from: 0.0);
     }
-    _flashCtrl.forward(from: 0);
+    _flashCtrl.forward(from: 0.0);
   }
 
   void _recordMiss() {
@@ -184,8 +195,9 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
       _flashText = 'MISS';
       _flashColor = AppColors.red;
     });
-    _missPressCtrl.forward(from: 0);
-    _flashCtrl.forward(from: 0);
+    // ZMIANA: forward(from: 0.0) zamiast 0
+    _missPressCtrl.forward(from: 0.0);
+    _flashCtrl.forward(from: 0.0);
   }
 
   void _undo() {
@@ -216,6 +228,17 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
 
   // ── Voice commands ────────────────────────────────────────────────────────
 
+  // ZMIANA: Nowa metoda zapobiegająca dublowaniu odświeżania
+  void _scheduleListenRestart() {
+    if (!_voiceOn || !mounted) return;
+    _restartTimer?.cancel();
+    _restartTimer = Timer(const Duration(milliseconds: 200), () {
+      if (_voiceOn && mounted && !_speech.isListening) {
+        _startListening();
+      }
+    });
+  }
+
   void _toggleVoice() async {
     HapticFeedback.selectionClick();
     if (!_speechAvailable) {
@@ -223,19 +246,25 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
         _flashText = 'MIC NIEDOSTĘPNY';
         _flashColor = AppColors.red;
       });
-      _flashCtrl.forward(from: 0);
+      // ZMIANA: forward(from: 0.0)
+      _flashCtrl.forward(from: 0.0);
       return;
     }
     setState(() => _voiceOn = !_voiceOn);
     if (_voiceOn) {
       _startListening();
     } else {
+      _restartTimer?.cancel(); // ZMIANA: Anulowanie restartu przy wyłączaniu
       _speech.stop();
     }
   }
 
   void _startListening() {
-    if (!_speechAvailable || !_voiceOn || !mounted) return;
+    // ZMIANA: Zabezpieczenie przed podwójnym startem isListening
+    if (!_speechAvailable || !_voiceOn || !mounted || _speech.isListening) {
+      return;
+    }
+
     _speech.listen(
       listenOptions: SpeechListenOptions(
         partialResults: false,
@@ -247,27 +276,22 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
     );
   }
 
-  // FIX: iOS stops AVAudioSession after each utterance and fires "done".
-  // We restart immediately to get continuous listening.
   void _onSpeechStatus(String status) {
     if (!mounted) return;
     if (_voiceOn && (status == 'done' || status == 'notListening')) {
-      // Small delay prevents race condition between iOS session teardown
-      // and the next AVAudioSession activation.
-      Future.delayed(const Duration(milliseconds: 120), _startListening);
+      // ZMIANA: Użycie nowej funkcji
+      _scheduleListenRestart();
     }
   }
 
   void _onSpeechResult(SpeechRecognitionResult result) {
-    // FIX: guard — only handle truly final results
+    if (!mounted) return; // ZMIANA: Zabezpieczenie asynchroniczne
     if (!result.finalResult) return;
-    // FIX: re-entry guard
     if (_handlingResult) return;
     _handlingResult = true;
 
     final raw = result.recognizedWords.toLowerCase().trim();
 
-    // FIX: debounce — iOS sometimes fires the same text twice within ~200ms
     final now = DateTime.now();
     if (raw == _lastProcessed &&
         now.difference(_lastCommandAt) < _commandCooldown) {
@@ -290,6 +314,7 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
       _undo();
     } else if (raw.contains('koniec') || raw.contains('zakończ')) {
       setState(() => _voiceOn = false);
+      _restartTimer?.cancel(); // ZMIANA
       _speech.stop();
       _finish();
     }
@@ -301,6 +326,7 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
 
   void _finish() {
     _ticker?.cancel();
+    _restartTimer?.cancel(); // ZMIANA: Sprzątanie timera przy wyjściu
     _sw.stop();
     showModalBottomSheet(
       context: context,
@@ -419,7 +445,9 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
             animation: _flashCtrl,
             builder: (_, __) {
               final t = _flashCtrl.value;
-              final opacity = t < 0.6 ? 1.0 : (1.0 - (t - 0.6) / 0.4);
+              // ZMIANA: Zabezpieczenie .clamp() przed wartościami ujemnymi
+              final opacity =
+                  (t < 0.6 ? 1.0 : (1.0 - (t - 0.6) / 0.4)).clamp(0.0, 1.0);
               return Opacity(
                   opacity: opacity,
                   child: Transform.translate(
