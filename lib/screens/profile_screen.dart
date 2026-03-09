@@ -331,9 +331,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
             Text('Profile', style: AppText.ui(24, weight: FontWeight.w800)),
           ]),
           const Spacer(),
-          IconButton(
-              icon: const Icon(Icons.settings_outlined, color: AppColors.text2),
-              onPressed: () {}),
         ],
       ),
     );

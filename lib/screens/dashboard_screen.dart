@@ -57,14 +57,6 @@ class _DashboardScreenState extends State<DashboardScreen>
     return user.email?.split('@').first ?? 'Player';
   }
 
-  String get _initials {
-    final parts = _userName.split(' ');
-    if (parts.length >= 2) {
-      return '${parts[0][0]}${parts[1][0]}'.toUpperCase();
-    }
-    return _userName.substring(0, math.min(2, _userName.length)).toUpperCase();
-  }
-
   @override
   Widget build(BuildContext context) {
     final fade = CurvedAnimation(parent: _entryCtrl, curve: Curves.easeOut);
@@ -213,8 +205,7 @@ class _DashboardScreenState extends State<DashboardScreen>
               ],
             ),
             const Spacer(),
-            // Streak pill
-            if (streak > 0)
+            if (streak > 0) ...[
               Container(
                 padding:
                     const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
@@ -247,32 +238,7 @@ class _DashboardScreenState extends State<DashboardScreen>
                   ],
                 ),
               ),
-            const SizedBox(width: 14),
-            // Avatar
-            GestureDetector(
-              onLongPress: () async {
-                await _authService.signOut();
-              },
-              child: Container(
-                width: 40,
-                height: 40,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: AppColors.surface,
-                  border: Border.all(color: AppColors.border),
-                ),
-                child: Center(
-                  child: Text(
-                    _initials,
-                    style: AppText.ui(
-                      13,
-                      weight: FontWeight.w700,
-                      color: AppColors.text2,
-                    ),
-                  ),
-                ),
-              ),
-            ),
+            ],
           ],
         ),
       ),
