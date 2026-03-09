@@ -302,19 +302,32 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
     _lastCommandAt = now;
 
     // Dispatch
-    if (raw.contains('punkt') || raw.contains('trafiony')) {
+    if (raw.contains('punkt') ||
+        raw.contains('trafiony') ||
+        raw.contains('traf')) {
       _recordMake(swish: false);
-    } else if (raw.contains('czysto') || raw.contains('swish')) {
+    } else if (raw.contains('czysto') ||
+        raw.contains('swish') ||
+        raw.contains('swoosh')) {
       _recordMake(swish: true);
     } else if (raw.contains('pudło') ||
         raw.contains('pudlo') ||
-        raw.contains('chybiony')) {
+        raw.contains('chybiony') ||
+        raw.contains('miss') ||
+        raw.contains('pud')) {
       _recordMiss();
-    } else if (raw.contains('cofnij') || raw.contains('wróć')) {
+    } else if (raw.contains('cofnij') ||
+        raw.contains('wróć') ||
+        raw.contains('wroc') ||
+        raw.contains('undo')) {
       _undo();
-    } else if (raw.contains('koniec') || raw.contains('zakończ')) {
+    } else if (raw.contains('koniec') ||
+        raw.contains('zakończ') ||
+        raw.contains('zakoncz') ||
+        raw.contains('stop') ||
+        raw.contains('finish')) {
       setState(() => _voiceOn = false);
-      _restartTimer?.cancel(); // ZMIANA
+      _restartTimer?.cancel();
       _speech.stop();
       _finish();
     }
@@ -1139,11 +1152,11 @@ class _VoiceTipsSheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     const tips = [
-      ('"punkt"', 'Records a make', AppColors.green),
-      ('"czysto"', 'Records a swish', AppColors.gold),
-      ('"pudło"', 'Records a miss', AppColors.red),
-      ('"cofnij"', 'Undoes last shot', AppColors.text2),
-      ('"koniec"', 'Ends the session', AppColors.blue),
+      ('"punkt" / "traf"', 'Records a make', AppColors.green),
+      ('"czysto" / "swish"', 'Records a swish', AppColors.gold),
+      ('"pudło" / "miss"', 'Records a miss', AppColors.red),
+      ('"cofnij" / "wróć"', 'Undoes last shot', AppColors.text2),
+      ('"koniec" / "stop"', 'Ends the session', AppColors.blue),
     ];
     return Container(
       margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
