@@ -58,7 +58,8 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
 
   // Cooldown na komendy (nie na restart nasłuchiwania)
   DateTime _lastCommandAt = DateTime.fromMillisecondsSinceEpoch(0);
-  static const _commandCooldown = Duration(seconds: 2);
+  // 1s cooldown – wystarczy żeby zablokować echo, ale nie przeszkadza w grze
+  static const _commandCooldown = Duration(milliseconds: 1000);
 
   // Zamiast Timer?, używamy jednego scheduled-restart z cancel
   Timer? _restartTimer;
@@ -66,7 +67,8 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
   // Ostatnio rozpoznane słowa – deduplication
   String _lastRecognizedWords = '';
 
-  final AudioPlayer _audioPlayer = AudioPlayer();
+  late final AudioPlayer _audioPlayer;
+  bool _audioReady = false;
 
   String _flashText = '';
   Color _flashColor = AppColors.green;
@@ -135,7 +137,42 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
     _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
       if (mounted) setState(() {});
     });
+    _initAudio();
     _initSpeech();
+  }
+
+  Future<void> _initAudio() async {
+    try {
+      _audioPlayer = AudioPlayer();
+      // KLUCZOWE: .ambient + mixWithOthers = dźwięki NIE przerywają mikrofonu
+      // Bez tego audioplayers przejmuje AVAudioSession → crash speech_to_text
+      await _audioPlayer.setAudioContext(AudioContext(
+        iOS: AudioContextIOS(
+          category: AVAudioSessionCategory.ambient,
+          options: const {
+            AVAudioSessionOptions.mixWithOthers,
+          },
+        ),
+        android: const AudioContextAndroid(
+          isSpeakerphoneOn: false,
+          stayAwake: false,
+          contentType: AndroidContentType.sonification,
+          usageType: AndroidUsageType.assistanceSonification,
+          audioFocus: AndroidAudioFocus.gainTransientMayDuck,
+        ),
+      ));
+      _audioReady = true;
+      debugPrint('Audio: initialized with ambient+mix');
+    } catch (e) {
+      debugPrint('Audio init error: $e');
+      // Fallback – spróbuj bez konfiguracji
+      try {
+        _audioPlayer = AudioPlayer();
+        _audioReady = true;
+      } catch (_) {
+        _audioReady = false;
+      }
+    }
   }
 
   Future<void> _initSpeech() async {
@@ -170,23 +207,25 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
     _swishPressCtrl.dispose();
     _voiceCtrl.dispose();
     _entryCtrl.dispose();
-    _audioPlayer.dispose();
+    if (_audioReady) _audioPlayer.dispose();
     super.dispose();
   }
 
   // ── Audio Feedback ────────────────────────────────────────────────────────
 
   void _playSuccessSound() {
+    if (!_audioReady) return;
     try {
-      _audioPlayer.play(AssetSource('sounds/hit.mp3'), volume: 0.5);
+      _audioPlayer.play(AssetSource('sounds/hit.mp3'), volume: 0.6);
     } catch (e) {
       debugPrint('Audio error: $e');
     }
   }
 
   void _playErrorSound() {
+    if (!_audioReady) return;
     try {
-      _audioPlayer.play(AssetSource('sounds/miss.mp3'), volume: 0.5);
+      _audioPlayer.play(AssetSource('sounds/miss.mp3'), volume: 0.6);
     } catch (e) {
       debugPrint('Audio error: $e');
     }
@@ -329,8 +368,8 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
         // To eliminuje crash z "za krótkim" oknem
         listenFor: const Duration(seconds: 55),
         // pauseFor: ile ciszy kończy rozpoznawanie i zwraca wynik
-        // 1.5s to dobry kompromis – szybka reakcja bez fałszywych alarmów
-        pauseFor: const Duration(milliseconds: 1500),
+        // 800ms – szybka reakcja, iOS zdąży przetworzyć krótkie komendy
+        pauseFor: const Duration(milliseconds: 800),
         listenOptions: SpeechListenOptions(
           // partialResults: false – wynik tylko gdy iOS jest pewien
           // Eliminuje wielokrotne wywołanie tej samej komendy
