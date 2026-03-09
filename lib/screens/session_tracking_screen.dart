@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:audioplayers/audioplayers.dart';
+import 'package:wakelock_plus/wakelock_plus.dart'; // ZMIANA: Import Wakelock
 import '../main.dart';
 import 'session_setup_screen.dart';
 import '../models/session.dart';
@@ -45,7 +46,6 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
   Timer? _ticker;
   Timer? _restartTimer;
 
-  // ZMIANA: Powrót do jednego odtwarzacza
   final AudioPlayer _audioPlayer = AudioPlayer();
 
   // ── Speech-to-text ────────────────────────────────────────────────────────
@@ -133,6 +133,7 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
   @override
   void initState() {
     super.initState();
+    WakelockPlus.enable(); // ZMIANA: Włączenie ekranu na stałe
     _sw.start();
     _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
       if (mounted) setState(() {});
@@ -152,6 +153,7 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
 
   @override
   void dispose() {
+    WakelockPlus.disable(); // ZMIANA: Wyłączenie blokady ekranu przy wyjściu
     _ticker?.cancel();
     _restartTimer?.cancel();
     _sw.stop();
@@ -160,7 +162,7 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
     _makePressCtrl.dispose();
     _missPressCtrl.dispose();
     _swishPressCtrl.dispose();
-    _audioPlayer.dispose(); // ZMIANA: Sprzątanie pojedynczego odtwarzacza
+    _audioPlayer.dispose();
     _voiceCtrl.dispose();
     _entryCtrl.dispose();
     super.dispose();
@@ -339,6 +341,8 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
   // ── Finish ────────────────────────────────────────────────────────────────
 
   void _finish() {
+    WakelockPlus
+        .disable(); // ZMIANA: Wyłączenie blokady, gdy otwieramy podsumowanie
     _ticker?.cancel();
     _restartTimer?.cancel();
     _playSound('end.mp3');
@@ -365,12 +369,21 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
           Navigator.of(context).pop();
         },
       ),
-    );
+    ).then((_) {
+      // ZMIANA: Opcjonalne zabezpieczenie, jeśli użytkownik zamknie podsumowanie (bez zapisu/discardu)
+      // i wróci do treningu, znowu włączamy ekran
+      if (mounted) {
+        WakelockPlus.enable();
+        _sw.start();
+        _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
+          if (mounted) setState(() {});
+        });
+      }
+    });
   }
 
   // ── Odtwarzacz Dźwięku ────────────────────────────────────────────────────
 
-  // ZMIANA: Powrót do logiki pojedynczego odtwarzacza
   Future<void> _playSound(String name,
       {double volume = 0.7, Duration? position}) async {
     try {
