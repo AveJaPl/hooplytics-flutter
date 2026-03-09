@@ -10,6 +10,8 @@ import '../services/session_service.dart';
 import 'package:supabase_flutter/supabase_flutter.dart' hide Session;
 import 'package:speech_to_text/speech_to_text.dart';
 import 'package:speech_to_text/speech_recognition_result.dart';
+// ZMIANA: Bezpieczniejsza biblioteka do dźwięków
+import 'package:flutter_beep/flutter_beep.dart';
 
 enum ShotResult { miss, make, swish }
 
@@ -48,11 +50,8 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
   bool _speechAvailable = false;
   bool _voiceOn = false;
 
-  // KLUCZOWA ZMIANA: Prosty timestamp zamiast złożonej logiki
   DateTime _lastCommandAt = DateTime(2000);
   static const _commandCooldown = Duration(seconds: 3);
-
-  // Guard przeciwko podwójnemu przetwarzaniu
   bool _processing = false;
 
   String _flashText = '';
@@ -140,7 +139,6 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
         onStatus: _onSpeechStatus,
         onError: (e) {
           debugPrint('Speech error: ${e.errorMsg}');
-          // Przy błędzie - spróbuj ponownie jeśli voice jest włączony
           if (_voiceOn && mounted) {
             Future.delayed(const Duration(milliseconds: 500), _startListening);
           }
@@ -155,7 +153,7 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
 
   @override
   void dispose() {
-    _voiceOn = false; // Zatrzymaj loop przed dispose
+    _voiceOn = false;
     _ticker?.cancel();
     _sw.stop();
     _speech.stop();
@@ -168,12 +166,43 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
     super.dispose();
   }
 
+  // ── Audio Feedback ────────────────────────────────────────────────────────
+
+  // ZMIANA: Bezpieczne dźwięki z try-catch
+  void _playSuccessSound() {
+    try {
+      FlutterBeep.beep(); // Krótki beep dla make/swish
+    } catch (e) {
+      debugPrint('Beep error: $e');
+    }
+  }
+
+  void _playErrorSound() {
+    try {
+      FlutterBeep.beep(false); // Inny ton dla miss
+    } catch (e) {
+      debugPrint('Beep error: $e');
+    }
+  }
+
+  void _playClickSound() {
+    try {
+      // Używamy haptic jako fallback jeśli dźwięk nie działa
+      HapticFeedback.selectionClick();
+    } catch (e) {
+      debugPrint('Haptic error: $e');
+    }
+  }
+
   // ── Shot recording ────────────────────────────────────────────────────────
 
   void _recordMake({bool swish = false}) {
-    HapticFeedback.mediumImpact();
+    // ZMIANA: Haptic przed setState dla lepszego feedbacku
     if (_voiceOn) {
-      SystemSound.play(SystemSoundType.click);
+      HapticFeedback.heavyImpact();
+      _playSuccessSound();
+    } else {
+      HapticFeedback.mediumImpact();
     }
 
     setState(() {
@@ -196,9 +225,11 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
   }
 
   void _recordMiss() {
-    HapticFeedback.lightImpact();
     if (_voiceOn) {
-      SystemSound.play(SystemSoundType.alert);
+      HapticFeedback.mediumImpact();
+      _playErrorSound();
+    } else {
+      HapticFeedback.lightImpact();
     }
 
     setState(() {
@@ -214,8 +245,7 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
 
   void _undo() {
     if (_log.isEmpty) return;
-    HapticFeedback.selectionClick();
-    if (_voiceOn) SystemSound.play(SystemSoundType.click);
+    _playClickSound();
 
     setState(() {
       final last = _log.removeLast();
@@ -260,14 +290,14 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
     setState(() => _voiceOn = newVoiceState);
 
     if (_voiceOn) {
-      // Reset cooldown przy włączeniu
       _lastCommandAt = DateTime.now().subtract(_commandCooldown);
       _showFeedback('VOICE ON');
-      // Krótkie opóźnienie przed startem
+      _playClickSound();
       Future.delayed(const Duration(milliseconds: 300), _startListening);
     } else {
       _speech.stop();
       _showFeedback('VOICE OFF');
+      _playClickSound();
     }
   }
 
@@ -279,23 +309,27 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
     _flashCtrl.forward(from: 0.0);
   }
 
-  // KLUCZOWA ZMIANA: Maksymalnie uproszczony startListening
+  // KLUCZOWA ZMIANA: Bezpieczniejszy startListening z lepszymi checkami
   void _startListening() async {
-    if (!_voiceOn || !mounted || !_speechAvailable) return;
+    if (!_voiceOn || !mounted || !_speechAvailable) {
+      debugPrint(
+          'Cannot start: voiceOn=$_voiceOn, mounted=$mounted, available=$_speechAvailable');
+      return;
+    }
 
-    // Jeśli już słucha, nie rób nic
+    // ZMIANA: Sprawdź czy już nasłuchujemy
     if (_speech.isListening) {
-      debugPrint('Already listening, skipping');
+      debugPrint('Already listening, skip');
       return;
     }
 
     debugPrint('Starting listen...');
 
     try {
+      // ZMIANA: Krótsze timeouty dla stabilności
       await _speech.listen(
         onResult: _onSpeechResult,
-        // WAŻNE: Krótki czas nasłuchiwania dla iOS
-        listenFor: const Duration(seconds: 5),
+        listenFor: const Duration(seconds: 4),
         pauseFor: const Duration(seconds: 2),
         listenOptions: SpeechListenOptions(
           partialResults: false,
@@ -303,70 +337,76 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
         ),
         localeId: 'pl_PL',
       );
-      debugPrint('Listen started successfully');
-    } catch (e) {
-      debugPrint('Listen error: $e');
-      // Przy błędzie - spróbuj ponownie
+      debugPrint('Listen started OK');
+    } catch (e, stack) {
+      debugPrint('Listen error: $e\n$stack');
+      // Przy błędzie - spróbuj ponownie jeśli voice włączony
       if (_voiceOn && mounted) {
-        Future.delayed(const Duration(milliseconds: 600), _startListening);
+        Future.delayed(const Duration(milliseconds: 800), _startListening);
       }
     }
   }
 
-  // KLUCZOWA ZMIANA: Status handler zawsze restartuje gdy voiceOn
+  // ZMIANA: Bezpieczniejszy status handler
   void _onSpeechStatus(String status) {
-    debugPrint('Speech status: $status');
-
+    debugPrint('Status: $status');
     if (!mounted) return;
 
-    // Na iOS "done" oznacza koniec sesji - zawsze restartuj jeśli voiceOn
-    if (_voiceOn && (status == 'done' || status == 'notListening')) {
-      debugPrint('Will restart listening...');
-      // Opóźnienie dla iOS - pozwól na teardown AVAudioSession
-      Future.delayed(const Duration(milliseconds: 250), () {
-        if (mounted && _voiceOn) {
+    // ZMIANA: Obsługa wszystkich statusów końca
+    final shouldRestart = status == 'done' ||
+        status == 'notListening' ||
+        status == 'error' ||
+        status == 'stopped';
+
+    if (_voiceOn && shouldRestart) {
+      // ZMIANA: Dłuższe opóźnienie dla iOS
+      Future.delayed(const Duration(milliseconds: 400), () {
+        if (mounted && _voiceOn && !_speech.isListening) {
           _startListening();
         }
       });
     }
   }
 
-  // KLUCZOWA ZMIANA: Uproszczone przetwarzanie wyniku
+  // ZMIANA: Uproszczone i bezpieczniejsze przetwarzanie
   void _onSpeechResult(SpeechRecognitionResult result) {
     if (!mounted) return;
     if (!result.finalResult) return;
-    if (_processing) return; // Guard przeciwko podwójnemu przetwarzaniu
+
+    // ZMIANA: Sprawdź czy nie przetwarzamy już innej komendy
+    if (_processing) {
+      debugPrint('Already processing, skip');
+      return;
+    }
 
     _processing = true;
 
     final raw = result.recognizedWords.toLowerCase().trim();
     debugPrint('Heard: "$raw"');
 
-    // Sprawdź cooldown
     final now = DateTime.now();
     final timeSinceLast = now.difference(_lastCommandAt);
 
     if (timeSinceLast < _commandCooldown) {
-      final waitMs =
+      final remaining =
           _commandCooldown.inMilliseconds - timeSinceLast.inMilliseconds;
-      debugPrint('Too fast, ignoring (wait ${waitMs}ms)');
+      debugPrint('Too fast, wait ${remaining}ms');
       _showFeedback('WAIT...');
       _processing = false;
-      // Nie restartujemy - status handler zrobi to za nas
+      // ZMIANA: Nie restartujemy ręcznie - status handler zrobi to
       return;
     }
 
-    // Parsuj i wykonaj
     final command = _parseCommand(raw);
     if (command != null) {
       _lastCommandAt = now;
       _executeCommand(command);
     } else {
-      debugPrint('Unknown command: $raw');
+      debugPrint('Unknown: $raw');
     }
 
     _processing = false;
-    // Nie restartujemy ręcznie - status handler zrobi to gdy iOS zakończy sesję
+    // ZMIANA: Nie restartujemy ręcznie - status handler zrobi to po 'done'
   }
 
   String? _parseCommand(String raw) {
@@ -405,7 +445,7 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
   }
 
   void _executeCommand(String command) {
-    debugPrint('Executing: $command');
+    debugPrint('Execute: $command');
 
     switch (command) {
       case 'make':
@@ -424,7 +464,7 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
         _voiceOn = false;
         _speech.stop();
         _finish();
-        return; // Nie restartujemy
+        return;
     }
   }
 
