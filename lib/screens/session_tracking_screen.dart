@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:audioplayers/audioplayers.dart';
 import '../main.dart';
 import 'session_setup_screen.dart';
 import '../models/session.dart';
@@ -42,7 +43,8 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
 
   final Stopwatch _sw = Stopwatch();
   Timer? _ticker;
-  Timer? _restartTimer; // ZMIANA: Timer do bezpiecznego restartu mikrofonu
+  Timer? _restartTimer;
+  final AudioPlayer _audioPlayer = AudioPlayer();
 
   // ── Speech-to-text ────────────────────────────────────────────────────────
   final SpeechToText _speech = SpeechToText();
@@ -158,6 +160,7 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
     _makePressCtrl.dispose();
     _missPressCtrl.dispose();
     _swishPressCtrl.dispose();
+    _audioPlayer.dispose();
     _voiceCtrl.dispose();
     _entryCtrl.dispose();
     super.dispose();
@@ -180,8 +183,10 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
     // ZMIANA: forward(from: 0.0) zamiast 0
     if (swish) {
       _swishPressCtrl.forward(from: 0.0);
+      _playSound('swish.mp3');
     } else {
       _makePressCtrl.forward(from: 0.0);
+      _playSound('hit.mp3');
     }
     _flashCtrl.forward(from: 0.0);
   }
@@ -197,6 +202,7 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
     });
     // ZMIANA: forward(from: 0.0) zamiast 0
     _missPressCtrl.forward(from: 0.0);
+    _playSound('miss.mp3');
     _flashCtrl.forward(from: 0.0);
   }
 
@@ -212,6 +218,7 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
         _streak = _recomputeStreak();
       }
     });
+    _playSound('undo.mp3');
   }
 
   int _recomputeStreak() {
@@ -340,6 +347,7 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
   void _finish() {
     _ticker?.cancel();
     _restartTimer?.cancel(); // ZMIANA: Sprzątanie timera przy wyjściu
+    _playSound('end.mp3');
     _sw.stop();
     showModalBottomSheet(
       context: context,
@@ -367,6 +375,12 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
   }
 
   // ── Build ─────────────────────────────────────────────────────────────────
+
+  Future<void> _playSound(String name) async {
+    try {
+      await _audioPlayer.play(AssetSource('sounds/$name'), volume: 0.7);
+    } catch (_) {}
+  }
 
   @override
   Widget build(BuildContext context) {
