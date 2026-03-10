@@ -83,6 +83,13 @@ class AuthService extends BaseService {
   Future<void> signOut() async {
     await client.auth.signOut();
   }
+
+  /// Updates current user's metadata (e.g. display_name).
+  Future<UserResponse> updateUserMetadata(Map<String, dynamic> data) async {
+    return await client.auth.updateUser(
+      UserAttributes(data: data),
+    );
+  }
 }
 
 // ─── Password Strength Utility ─────────────────────

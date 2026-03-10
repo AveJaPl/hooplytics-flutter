@@ -289,37 +289,42 @@ class _HistoryScreenState extends State<HistoryScreen>
 
   // ── filter row ────────────────────────────────────────────────────────────
 
-  Widget _filterRow() => SizedBox(
-        height: 44,
-        child: ListView.builder(
-          scrollDirection: Axis.horizontal,
-          physics: const BouncingScrollPhysics(),
-          padding: const EdgeInsets.fromLTRB(20, 6, 12, 0),
-          itemCount: _filters.length,
-          itemBuilder: (_, i) {
+  Widget _filterRow() => Padding(
+        padding: const EdgeInsets.fromLTRB(20, 6, 20, 0),
+        child: Row(
+          children: List.generate(_filters.length, (i) {
             final on = _filterIdx == i;
-            return GestureDetector(
-              onTap: () {
-                HapticFeedback.selectionClick();
-                setState(() => _filterIdx = i);
-              },
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 170),
-                margin: const EdgeInsets.only(right: 8),
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-                decoration: BoxDecoration(
+            final isLast = i == _filters.length - 1;
+            return Expanded(
+              child: GestureDetector(
+                onTap: () {
+                  HapticFeedback.selectionClick();
+                  setState(() => _filterIdx = i);
+                },
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 170),
+                  margin: EdgeInsets.only(right: isLast ? 0 : 8),
+                  height: 32,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
                     color: on ? AppColors.gold : AppColors.surface,
                     border: Border.all(
-                        color: on ? AppColors.gold : AppColors.border),
-                    borderRadius: BorderRadius.circular(20)),
-                child: Text(_filters[i],
-                    style: AppText.ui(12,
-                        weight: FontWeight.w600,
-                        color: on ? AppColors.bg : AppColors.text2)),
+                      color: on ? AppColors.gold : AppColors.border,
+                    ),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    _filters[i],
+                    style: AppText.ui(
+                      11,
+                      weight: FontWeight.w600,
+                      color: on ? AppColors.bg : AppColors.text2,
+                    ),
+                  ),
+                ),
               ),
             );
-          },
+          }),
         ),
       );
 

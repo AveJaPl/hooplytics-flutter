@@ -16,6 +16,12 @@ dependencies:
   speech_to_text: ^7.3.0
   speech_to_text_windows: ^1.0.0+beta.8
   audioplayers: ^6.0.0
+  sherpa_onnx: ^1.12.28
+  flutter_background_service: ^5.1.0
+  just_audio: ^0.9.40
+  audio_session: ^0.1.21
+  record: ^5.1.2
+  permission_handler: ^11.3.1
 
 dev_dependencies:
   flutter_test:
@@ -33,4 +39,13 @@ flutter:
 
   assets:
     - assets/avatars/
-    - assets/sounds/
+    - assets/models/silero_vad.onnx
+    - assets/models/kws/encoder.onnx
+    - assets/models/kws/decoder.onnx
+    - assets/models/kws/joiner.onnx
+    - assets/models/kws/tokens.txt
+    - assets/sounds/hit.mp3
+    - assets/sounds/swish.mp3
+    - assets/sounds/miss.mp3
+    - assets/sounds/undo.mp3
+    - assets/sounds/end.mp3

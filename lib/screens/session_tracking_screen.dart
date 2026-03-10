@@ -1,336 +1,35 @@
+// lib/screens/session_tracking_screen.dart
+//
+// ═══════════════════════════════════════════════════════════════════════════
+//  SESSION TRACKING SCREEN
+//
+//  Odpowiedzialność tego pliku: TYLKO UI.
+//  - Uruchamia BackgroundAsrService na początku sesji
+//  - Nasłuchuje zdarzeń ze strumienia usługi tła
+//  - Wyświetla liczniki, animacje, trend
+//  - Obsługuje przyciski dotykowe jako alternatywę dla głosu
+//  - ZERO logiki audio i ASR tutaj
+// ═══════════════════════════════════════════════════════════════════════════
+
 import 'dart:async';
 import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:supabase_flutter/supabase_flutter.dart' hide Session;
+
 import '../main.dart';
-import 'session_setup_screen.dart';
 import '../models/session.dart';
 import '../models/shot.dart';
+import '../services/background_asr_service.dart';
 import '../services/session_service.dart';
-import 'package:supabase_flutter/supabase_flutter.dart' hide Session;
-import 'package:speech_to_text/speech_to_text.dart';
-import 'package:speech_to_text/speech_recognition_result.dart';
-import 'package:audioplayers/audioplayers.dart';
+import 'session_setup_screen.dart';
 
 enum ShotResult { miss, make, swish }
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  AUDIO MANAGER
-//
-//  Każdy dźwięk ma własny AudioPlayer – nie ma konfliktu gdy poprzedni gra.
-//  AVAudioSessionCategory.ambient + mixWithOthers = NIE przerywa mikrofonu.
-//  Inicjalizacja przed STT – żeby iOS zdążył zarejestrować sesję audio.
-// ─────────────────────────────────────────────────────────────────────────────
-
-class _AudioManager {
-  // Osobny player na każdy dźwięk – grają równolegle bez konfliktu
-  final _pHit = AudioPlayer();
-  final _pSwish = AudioPlayer();
-  final _pMiss = AudioPlayer();
-  final _pUndo = AudioPlayer();
-  final _pEnd = AudioPlayer();
-
-  bool _ready = false;
-
-  static final _ctx = AudioContext(
-    iOS: AudioContextIOS(
-      // ambient + mixWithOthers: dzwonki grają PRZEZ aktywny mikrofon
-      // bez tej opcji audioplayers przejmuje AVAudioSession → crash STT
-      category: AVAudioSessionCategory.ambient,
-      options: const {AVAudioSessionOptions.mixWithOthers},
-    ),
-    android: const AudioContextAndroid(
-      isSpeakerphoneOn: false,
-      stayAwake: false,
-      contentType: AndroidContentType.sonification,
-      usageType: AndroidUsageType.assistanceSonification,
-      audioFocus: AndroidAudioFocus.gainTransientMayDuck,
-    ),
-  );
-
-  Future<void> init() async {
-    try {
-      // Ustaw globalny kontekst audio raz dla wszystkich playerów
-      await AudioPlayer.global.setAudioContext(_ctx);
-      _ready = true;
-      debugPrint('Audio: ready');
-    } catch (e) {
-      debugPrint('Audio init error: $e');
-      // Fallback: spróbuj bez globalnego ctx, każdy player ustawi osobno
-      try {
-        for (final p in [_pHit, _pSwish, _pMiss, _pUndo, _pEnd]) {
-          await p.setAudioContext(_ctx);
-        }
-        _ready = true;
-        debugPrint('Audio: ready (fallback per-player ctx)');
-      } catch (e2) {
-        debugPrint('Audio fallback also failed: $e2 – using haptic only');
-        _ready = false;
-      }
-    }
-  }
-
-  void _play(AudioPlayer player, String asset) {
-    if (!_ready) {
-      return;
-    }
-    try {
-      player.stop(); // zatrzymaj jeśli poprzedni dźwięk jeszcze trwa
-      player.play(AssetSource(asset), volume: 0.8);
-    } catch (e) {
-      debugPrint('Audio play error ($asset): $e');
-    }
-  }
-
-  void hit() {
-    HapticFeedback.mediumImpact();
-    _play(_pHit, 'sounds/hit.mp3');
-  }
-
-  void swish() {
-    HapticFeedback.heavyImpact();
-    _play(_pSwish, 'sounds/swish.mp3');
-  }
-
-  void miss() {
-    HapticFeedback.lightImpact();
-    _play(_pMiss, 'sounds/miss.mp3');
-  }
-
-  void undo() {
-    HapticFeedback.selectionClick();
-    _play(_pUndo, 'sounds/undo.mp3');
-  }
-
-  void end() {
-    HapticFeedback.mediumImpact();
-    _play(_pEnd, 'sounds/end.mp3');
-  }
-
-  void click() {
-    HapticFeedback.selectionClick();
-  }
-
-  void dispose() {
-    for (final p in [_pHit, _pSwish, _pMiss, _pUndo, _pEnd]) {
-      p.dispose();
-    }
-  }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-//  VOICE ENGINE
-//
-//  Architektura: partialResults=true → reaguj przy pierwszym trafieniu słowa.
-//  Nie czekamy na pauseFor – dźwięk/akcja odpala się ~300-500ms po słowie.
-//
-//  Kluczowe decyzje:
-//  - _utteranceHandled: blokuje podwójne wyzwolenie z tej samej wypowiedzi
-//  - _pendingCommand: komenda złapana podczas restartu – wykonana po 'listening'
-//  - onActive: callback UI – true gdy STT faktycznie słucha (do dot-pulse)
-//    ale NIE zmieniaj tekstu przycisku – zawsze "Słucham" gdy voiceOn=true
-//  - restart gap: 80ms – praktycznie niezauważalny
-// ─────────────────────────────────────────────────────────────────────────────
-
-class _VoiceEngine {
-  final _stt = SpeechToText();
-  bool available = false;
-
-  bool _on = false;
-  bool _starting = false;
-  bool _utteranceHandled = false;
-
-  // Komenda złapana podczas restartu (gdy nie słuchamy jeszcze) – bufor
-  String? _pendingCommand;
-
-  String _lastText = '';
-  DateTime _lastAt = DateTime.fromMillisecondsSinceEpoch(0);
-  static const _dedupMs = 300;
-
-  Timer? _restartTimer;
-
-  void Function(String cmd)? onCommand;
-  void Function(bool active)?
-      onActive; // tylko do pulsującego dot, nie do tekstu
-
-  Future<bool> init() async {
-    try {
-      available = await _stt.initialize(
-        onStatus: _onStatus,
-        onError: (e) {
-          debugPrint('STT err: ${e.errorMsg}');
-          onActive?.call(false);
-          if (!e.permanent) {
-            _scheduleRestart(ms: 600);
-          }
-        },
-      );
-    } catch (e) {
-      debugPrint('STT init: $e');
-      available = false;
-    }
-    debugPrint('STT available=$available');
-    return available;
-  }
-
-  void start() {
-    if (!available) {
-      return;
-    }
-    _on = true;
-    _utteranceHandled = false;
-    _pendingCommand = null;
-    _lastText = '';
-    _listen();
-  }
-
-  void stop() {
-    _on = false;
-    _restartTimer?.cancel();
-    _stt.cancel();
-    _starting = false;
-    onActive?.call(false);
-  }
-
-  void dispose() => stop();
-
-  Future<void> _listen() async {
-    if (!_on || _starting) {
-      return;
-    }
-    _starting = true;
-
-    try {
-      if (_stt.isListening) {
-        _stt.cancel();
-        await Future.delayed(const Duration(milliseconds: 80));
-      }
-      if (!_on) {
-        return;
-      }
-
-      await _stt.listen(
-        onResult: _onResult,
-        listenFor: const Duration(seconds: 50),
-        pauseFor: const Duration(milliseconds: 1500),
-        listenOptions: SpeechListenOptions(
-          partialResults: true, // reaguj natychmiast, nie czekaj na ciszę
-          listenMode: ListenMode.dictation,
-          cancelOnError: false,
-        ),
-        localeId: 'pl_PL',
-      );
-    } catch (e) {
-      debugPrint('STT listen: $e');
-      _scheduleRestart(ms: 800);
-    } finally {
-      _starting = false;
-    }
-  }
-
-  void _onStatus(String s) {
-    debugPrint('STT: $s');
-    if (s == 'listening') {
-      _utteranceHandled = false;
-      onActive?.call(true);
-      // Wykonaj komendę złapaną podczas poprzedniego restartu
-      if (_pendingCommand != null) {
-        final cmd = _pendingCommand!;
-        _pendingCommand = null;
-        Future.microtask(() => onCommand?.call(cmd));
-      }
-    } else if (s == 'done') {
-      onActive?.call(false);
-      _scheduleRestart(ms: 80);
-    }
-    // 'notListening' ignorujemy – pojawia się przed 'listening'
-  }
-
-  void _onResult(SpeechRecognitionResult r) {
-    final raw = r.recognizedWords.toLowerCase().trim();
-    if (raw.isEmpty || _utteranceHandled) {
-      return;
-    }
-
-    final now = DateTime.now();
-    if (raw == _lastText && now.difference(_lastAt).inMilliseconds < _dedupMs) {
-      return;
-    }
-
-    final cmd = _parse(raw);
-    if (cmd == null) {
-      return;
-    }
-
-    _utteranceHandled = true;
-    _lastText = raw;
-    _lastAt = now;
-    debugPrint('STT → $cmd  ("$raw")');
-    onCommand?.call(cmd);
-  }
-
-  String? _parse(String raw) {
-    if (raw.contains('czysto') ||
-        raw.contains('czysta') ||
-        raw.contains('swish') ||
-        raw.contains('swoosh')) {
-      return 'swish';
-    }
-
-    if (raw.contains('punkt') ||
-        raw.contains('traf') ||
-        raw.contains('make') ||
-        raw.contains('wpadł') ||
-        raw.contains('wpadla') ||
-        raw.contains('yes')) {
-      return 'make';
-    }
-
-    if (raw.contains('pudło') ||
-        raw.contains('pudlo') ||
-        raw.contains('miss') ||
-        raw.contains('chybił') ||
-        raw.contains('chybil') ||
-        _word(raw, 'pud')) {
-      return 'miss';
-    }
-
-    if (raw.contains('cofnij') ||
-        raw.contains('wróć') ||
-        raw.contains('wroc') ||
-        raw.contains('undo') ||
-        raw.contains('anuluj') ||
-        raw.contains('back')) {
-      return 'undo';
-    }
-
-    if (raw.contains('koniec') ||
-        raw.contains('zakończ') ||
-        raw.contains('stop') ||
-        raw.contains('finish') ||
-        raw.contains('end') ||
-        raw.contains('skończ')) {
-      return 'finish';
-    }
-
-    return null;
-  }
-
-  bool _word(String t, String w) =>
-      RegExp(r'\b' + RegExp.escape(w) + r'\b').hasMatch(t);
-
-  void _scheduleRestart({required int ms}) {
-    if (!_on) return;
-    _restartTimer?.cancel();
-    _restartTimer = Timer(Duration(milliseconds: ms), () {
-      if (_on && !_starting) _listen();
-    });
-  }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-//  SCREEN
-// ─────────────────────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════
+//  SCREEN WIDGET
+// ═══════════════════════════════════════════════════════════════════════════
 
 class SessionTrackingScreen extends StatefulWidget {
   final SessionMode mode;
@@ -352,22 +51,26 @@ class SessionTrackingScreen extends StatefulWidget {
 
 class _SessionTrackingScreenState extends State<SessionTrackingScreen>
     with TickerProviderStateMixin {
+  // ── Stan sesji ──────────────────────────────────────────────────────────
   int _made = 0, _swishes = 0, _attempts = 0, _streak = 0, _bestStreak = 0;
   final List<ShotResult> _log = [];
 
   final Stopwatch _sw = Stopwatch();
   Timer? _ticker;
 
-  final _voice = _VoiceEngine();
-  final _audio = _AudioManager();
+  // ── Stan Voice ──────────────────────────────────────────────────────────
+  bool _voiceOn = false; // usługa tła jest aktywna
+  bool _voiceActive = false; // VAD właśnie wykrywa mowę (dot-pulse)
+  bool _serviceReady = false; // modele załadowane
 
-  bool _voiceOn = false;
-  // _voiceActive: tylko do pulsującego dot, NIE zmienia tekstu przycisku
-  bool _voiceActive = false;
+  // ── Subskrypcje zdarzeń z usługi tła ────────────────────────────────────
+  final List<StreamSubscription> _subs = [];
 
+  // ── Flash feedback ──────────────────────────────────────────────────────
   String _flashText = '';
   Color _flashColor = AppColors.green;
 
+  // ── Animacje ─────────────────────────────────────────────────────────────
   late final AnimationController _flashCtrl = AnimationController(
       vsync: this, duration: const Duration(milliseconds: 600));
   late final AnimationController _makePressCtrl = AnimationController(
@@ -393,6 +96,7 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
         TweenSequenceItem(tween: Tween(begin: 1.03, end: 1.0), weight: 25),
       ]).animate(CurvedAnimation(parent: c, curve: Curves.easeOut));
 
+  // ── Obliczenia ────────────────────────────────────────────────────────────
   double get _pct => _attempts == 0 ? 0.0 : _made / _attempts;
   String get _pctStr => _attempts == 0 ? '—' : '${(_pct * 100).round()}%';
   int get _missed => _attempts - _made;
@@ -410,6 +114,10 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
         '${e.inSeconds.remainder(60).toString().padLeft(2, '0')}';
   }
 
+  // ═══════════════════════════════════════════════════════════════════════
+  //  LIFECYCLE
+  // ═══════════════════════════════════════════════════════════════════════
+
   @override
   void initState() {
     super.initState();
@@ -417,24 +125,16 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
     _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
       if (mounted) setState(() {});
     });
-    // Audio najpierw – musi zarejestrować ambient session PRZED STT
-    _audio.init().then((_) => _initVoice());
-  }
-
-  Future<void> _initVoice() async {
-    await _voice.init();
-    _voice.onCommand = _onCmd;
-    _voice.onActive = (a) {
-      if (mounted) setState(() => _voiceActive = a);
-    };
-    if (mounted) setState(() {});
+    _subscribeToService();
   }
 
   @override
   void dispose() {
-    _voiceOn = false;
-    _voice.dispose();
-    _audio.dispose();
+    // Zatrzymaj subskrypcje, ale NIE zatrzymuj usługi tła –
+    // usługa żyje niezależnie od UI (ekran może być wygaszony)
+    for (final s in _subs) {
+      s.cancel();
+    }
     _ticker?.cancel();
     _sw.stop();
     _flashCtrl.dispose();
@@ -446,53 +146,122 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
     super.dispose();
   }
 
-  // ── Voice ─────────────────────────────────────────────────────────────────
+  // ═══════════════════════════════════════════════════════════════════════
+  //  SUBSKRYPCJE ZDARZEŃ Z TŁA
+  //
+  //  Każde zdarzenie przychodzi jako Map<String,dynamic>?
+  //  Wywołanie setState() tutaj jest bezpieczne – jesteśmy na głównym izolacje.
+  // ═══════════════════════════════════════════════════════════════════════
 
-  void _toggleVoice() {
-    _audio.click();
-    if (!_voice.available) {
-      _flash('MIC NIEDOSTĘPNY', AppColors.red);
-      return;
-    }
-    setState(() => _voiceOn = !_voiceOn);
-    if (_voiceOn) {
-      _voice.start();
-      _flash('VOICE ON', AppColors.gold);
-    } else {
-      _voice.stop();
-      setState(() => _voiceActive = false);
-      _flash('VOICE OFF', AppColors.gold);
-    }
-  }
+  void _subscribeToService() {
+    // ── Trafienie ──────────────────────────────────────────────────────────
+    _subs.add(
+      BackgroundAsrService.events(AsrEvents.shotMake).listen((_) {
+        if (!mounted) return;
+        _applyMake(swish: false);
+      }),
+    );
 
-  void _onCmd(String cmd) {
-    if (!mounted) return;
-    switch (cmd) {
-      case 'make':
-        _recordMake(swish: false);
-        break;
-      case 'swish':
-        _recordMake(swish: true);
-        break;
-      case 'miss':
-        _recordMiss();
-        break;
-      case 'undo':
-        _undo();
-        break;
-      case 'finish':
-        _voiceOn = false;
-        _voice.stop();
-        _audio.end();
+    // ── Swish ──────────────────────────────────────────────────────────────
+    _subs.add(
+      BackgroundAsrService.events(AsrEvents.shotSwish).listen((_) {
+        if (!mounted) return;
+        _applyMake(swish: true);
+      }),
+    );
+
+    // ── Pudło ──────────────────────────────────────────────────────────────
+    _subs.add(
+      BackgroundAsrService.events(AsrEvents.shotMiss).listen((_) {
+        if (!mounted) return;
+        _applyMiss();
+      }),
+    );
+
+    // ── Cofnij ─────────────────────────────────────────────────────────────
+    _subs.add(
+      BackgroundAsrService.events(AsrEvents.shotUndo).listen((_) {
+        if (!mounted) return;
+        _applyUndo();
+      }),
+    );
+
+    // ── Koniec ─────────────────────────────────────────────────────────────
+    _subs.add(
+      BackgroundAsrService.events(AsrEvents.finish).listen((_) {
+        if (!mounted) return;
         _finish();
-        break;
+      }),
+    );
+
+    // ── Stan VAD (dot-pulse) ───────────────────────────────────────────────
+    _subs.add(
+      BackgroundAsrService.events(AsrEvents.voiceState).listen((data) {
+        if (!mounted) return;
+        final active = data?['active'] as bool? ?? false;
+        setState(() => _voiceActive = active);
+      }),
+    );
+
+    // ── Błędy z serwisu ────────────────────────────────────────────────────
+    _subs.add(
+      BackgroundAsrService.events(AsrEvents.error).listen((data) {
+        if (!mounted) return;
+        final msg = data?['message'] as String? ?? 'Unknown error';
+        debugPrint('[UI] Błąd serwisu: $msg');
+        _flash('ERROR', AppColors.red);
+      }),
+    );
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  //  VOICE TOGGLE
+  // ═══════════════════════════════════════════════════════════════════════
+
+  Future<void> _toggleVoice() async {
+    HapticFeedback.selectionClick();
+
+    if (!_voiceOn) {
+      // ── Włącz: uruchom usługę tła ────────────────────────────────────
+      setState(() {
+        _voiceOn = true;
+        _serviceReady = false;
+      });
+      _flash('VOICE ON', AppColors.gold);
+
+      try {
+        await BackgroundAsrService.startSession();
+        if (mounted) setState(() => _serviceReady = true);
+      } catch (e) {
+        if (mounted) {
+          setState(() {
+            _voiceOn = false;
+            _serviceReady = false;
+          });
+          _flash('MIC ERROR', AppColors.red);
+        }
+      }
+    } else {
+      // ── Wyłącz: zatrzymaj nasłuchiwanie, ale NIE zabijaj usługi ─────
+      // (usługa zostanie zamknięta w _finish() lub przy dispose okna)
+      await BackgroundAsrService.stopListening();
+      if (mounted) {
+        setState(() {
+          _voiceOn = false;
+          _voiceActive = false;
+        });
+        _flash('VOICE OFF', AppColors.gold);
+      }
     }
   }
 
-  // ── Shots ─────────────────────────────────────────────────────────────────
+  // ═══════════════════════════════════════════════════════════════════════
+  //  LOGIKA RZUTÓW
+  // ═══════════════════════════════════════════════════════════════════════
 
-  void _recordMake({bool swish = false}) {
-    swish ? _audio.swish() : _audio.hit();
+  /// Wspólna logika dla make/swish – wywoływana z UI lub zdarzenia serwisu.
+  void _applyMake({required bool swish}) {
+    HapticFeedback.mediumImpact();
     setState(() {
       _made++;
       if (swish) _swishes++;
@@ -502,12 +271,14 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
       _log.add(swish ? ShotResult.swish : ShotResult.make);
     });
     _flash(
-        swish ? '+ SWISH' : '+ MADE', swish ? AppColors.gold : AppColors.green);
+      swish ? '+ SWISH' : '+ MADE',
+      swish ? AppColors.gold : AppColors.green,
+    );
     (swish ? _swishPressCtrl : _makePressCtrl).forward(from: 0);
   }
 
-  void _recordMiss() {
-    _audio.miss();
+  void _applyMiss() {
+    HapticFeedback.lightImpact();
     setState(() {
       _attempts++;
       _streak = 0;
@@ -517,9 +288,9 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
     _missPressCtrl.forward(from: 0);
   }
 
-  void _undo() {
+  void _applyUndo() {
     if (_log.isEmpty) return;
-    _audio.undo();
+    HapticFeedback.selectionClick();
     setState(() {
       final last = _log.removeLast();
       _attempts--;
@@ -553,11 +324,22 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
     _flashCtrl.forward(from: 0);
   }
 
+  // ═══════════════════════════════════════════════════════════════════════
+  //  ZAKOŃCZENIE SESJI
+  // ═══════════════════════════════════════════════════════════════════════
+
   void _finish() {
-    _voiceOn = false;
-    _voice.stop();
+    // Zatrzymaj timery UI
     _ticker?.cancel();
     _sw.stop();
+
+    // Zamknij usługę tła
+    BackgroundAsrService.shutdown();
+    setState(() {
+      _voiceOn = false;
+      _voiceActive = false;
+    });
+
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
@@ -583,7 +365,9 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
     );
   }
 
-  // ── Build ─────────────────────────────────────────────────────────────────
+  // ═══════════════════════════════════════════════════════════════════════
+  //  BUILD
+  // ═══════════════════════════════════════════════════════════════════════
 
   @override
   Widget build(BuildContext context) {
@@ -592,31 +376,35 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
       body: FadeTransition(
         opacity: CurvedAnimation(parent: _entryCtrl, curve: Curves.easeOut),
         child: SafeArea(
-            child: Column(children: [
-          _topBar(),
-          Expanded(
+          child: Column(children: [
+            _topBar(),
+            Expanded(
               child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20),
-            child: Column(children: [
-              const SizedBox(height: 12),
-              _flashLabel(),
-              const Spacer(flex: 1),
-              _gauge(),
-              const SizedBox(height: 24),
-              _statsRow(),
-              const Spacer(flex: 2),
-              _trend(),
-              const Spacer(flex: 3),
-              _trackBtns(),
-              const SizedBox(height: 14),
-              _utilBar(),
-              const SizedBox(height: 16),
-            ]),
-          )),
-        ])),
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                child: Column(children: [
+                  const SizedBox(height: 12),
+                  _flashLabel(),
+                  const Spacer(flex: 1),
+                  _gauge(),
+                  const SizedBox(height: 24),
+                  _statsRow(),
+                  const Spacer(flex: 2),
+                  _trend(),
+                  const Spacer(flex: 3),
+                  _trackBtns(),
+                  const SizedBox(height: 14),
+                  _utilBar(),
+                  const SizedBox(height: 16),
+                ]),
+              ),
+            ),
+          ]),
+        ),
       ),
     );
   }
+
+  // ── Top Bar ───────────────────────────────────────────────────────────────
 
   Widget _topBar() => Padding(
         padding: const EdgeInsets.fromLTRB(20, 18, 20, 0),
@@ -624,18 +412,23 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
           _BackBtn(onTap: () => Navigator.of(context).pop()),
           const SizedBox(width: 14),
           Expanded(
-              child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                Text(widget.mode == SessionMode.position ? 'POSITION' : 'RANGE',
-                    style: AppText.ui(9,
-                        color: AppColors.text3,
-                        letterSpacing: 1.8,
-                        weight: FontWeight.w700)),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  widget.mode == SessionMode.position ? 'POSITION' : 'RANGE',
+                  style: AppText.ui(9,
+                      color: AppColors.text3,
+                      letterSpacing: 1.8,
+                      weight: FontWeight.w700),
+                ),
                 const SizedBox(height: 1),
                 Text(widget.selectionLabel,
                     style: AppText.ui(17, weight: FontWeight.w700)),
-              ])),
+              ],
+            ),
+          ),
+          // Timer chip
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
             decoration: BoxDecoration(
@@ -668,6 +461,8 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
         ]),
       );
 
+  // ── Flash label ───────────────────────────────────────────────────────────
+
   Widget _flashLabel() => SizedBox(
         height: 24,
         child: AnimatedBuilder(
@@ -691,16 +486,20 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
         ),
       );
 
+  // ── Gauge (ring) ──────────────────────────────────────────────────────────
+
   Widget _gauge() => SizedBox(
         width: 210,
         height: 210,
         child: Stack(alignment: Alignment.center, children: [
           SizedBox.expand(
-              child: CustomPaint(
-                  painter: _RingPainter(
-                      progress: _attempts == 0 ? 1.0 : _pct,
-                      color: _ringColor,
-                      empty: _attempts == 0))),
+            child: CustomPaint(
+              painter: _RingPainter(
+                  progress: _attempts == 0 ? 1.0 : _pct,
+                  color: _ringColor,
+                  empty: _attempts == 0),
+            ),
+          ),
           Column(mainAxisSize: MainAxisSize.min, children: [
             AnimatedBuilder(
               animation: _makePressCtrl,
@@ -717,6 +516,8 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
           ]),
         ]),
       );
+
+  // ── Stats row ─────────────────────────────────────────────────────────────
 
   Widget _statsRow() => Row(
         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
@@ -741,59 +542,66 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
         ],
       );
 
+  // ── Trend chart ───────────────────────────────────────────────────────────
+
   Widget _trend() => Container(
         padding: const EdgeInsets.all(18),
         decoration: BoxDecoration(
             color: AppColors.surface,
             border: Border.all(color: AppColors.border),
             borderRadius: BorderRadius.circular(20)),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-            Text('ACCURACY TREND',
-                style: AppText.ui(10,
-                    color: AppColors.text3,
-                    letterSpacing: 1.5,
-                    weight: FontWeight.w700)),
-            Text('Recent', style: AppText.ui(10, color: AppColors.text3)),
-          ]),
-          const SizedBox(height: 18),
-          SizedBox(
-            height: 50,
-            width: double.infinity,
-            child: _log.isEmpty
-                ? Center(
-                    child: Text('Awaiting first shot…',
-                        style: AppText.ui(13, color: AppColors.text3)))
-                : CustomPaint(painter: _TrendPainter(_log, _ringColor)),
-          ),
-          if (_log.isNotEmpty) ...[
-            const SizedBox(height: 12),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children:
-                  (_log.length > 20 ? _log.sublist(_log.length - 20) : _log)
-                      .map((r) => Container(
-                          width: 8,
-                          height: 8,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: r == ShotResult.swish
-                                ? AppColors.gold
-                                : r == ShotResult.make
-                                    ? AppColors.green
-                                    : AppColors.red.withValues(alpha: 0.55),
-                          )))
-                      .toList(),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+              Text('ACCURACY TREND',
+                  style: AppText.ui(10,
+                      color: AppColors.text3,
+                      letterSpacing: 1.5,
+                      weight: FontWeight.w700)),
+              Text('Recent', style: AppText.ui(10, color: AppColors.text3)),
+            ]),
+            const SizedBox(height: 18),
+            SizedBox(
+              height: 50,
+              width: double.infinity,
+              child: _log.isEmpty
+                  ? Center(
+                      child: Text('Awaiting first shot…',
+                          style: AppText.ui(13, color: AppColors.text3)))
+                  : CustomPaint(painter: _TrendPainter(_log, _ringColor)),
             ),
+            if (_log.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children:
+                    (_log.length > 20 ? _log.sublist(_log.length - 20) : _log)
+                        .map((r) => Container(
+                            width: 8,
+                            height: 8,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: r == ShotResult.swish
+                                  ? AppColors.gold
+                                  : r == ShotResult.make
+                                      ? AppColors.green
+                                      : AppColors.red.withValues(alpha: 0.55),
+                            )))
+                        .toList(),
+              ),
+            ],
           ],
-        ]),
+        ),
       );
+
+  // ── Track buttons (dotykowe) ──────────────────────────────────────────────
 
   Widget _trackBtns() => Row(children: [
         Expanded(
-            child: AnimatedBuilder(
-          animation: _missPressCtrl,
-          builder: (_, __) => Transform.scale(
+          child: AnimatedBuilder(
+            animation: _missPressCtrl,
+            builder: (_, __) => Transform.scale(
               scale: _missAnim.value,
               child: _ActionBtn(
                   label: 'MISS',
@@ -802,13 +610,15 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
                   iconColor: AppColors.red,
                   bg: AppColors.surface,
                   border: AppColors.border,
-                  onTap: _recordMiss)),
-        )),
+                  onTap: _applyMiss),
+            ),
+          ),
+        ),
         const SizedBox(width: 12),
         Expanded(
-            child: AnimatedBuilder(
-          animation: _makePressCtrl,
-          builder: (_, __) => Transform.scale(
+          child: AnimatedBuilder(
+            animation: _makePressCtrl,
+            builder: (_, __) => Transform.scale(
               scale: _makeAnim.value,
               child: _ActionBtn(
                   label: 'MAKE',
@@ -818,13 +628,15 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
                   bg: AppColors.green,
                   border: Colors.transparent,
                   shadow: AppColors.green.withValues(alpha: 0.25),
-                  onTap: () => _recordMake(swish: false))),
-        )),
+                  onTap: () => _applyMake(swish: false)),
+            ),
+          ),
+        ),
         const SizedBox(width: 12),
         Expanded(
-            child: AnimatedBuilder(
-          animation: _swishPressCtrl,
-          builder: (_, __) => Transform.scale(
+          child: AnimatedBuilder(
+            animation: _swishPressCtrl,
+            builder: (_, __) => Transform.scale(
               scale: _swishAnim.value,
               child: _ActionBtn(
                   label: 'SWISH',
@@ -834,87 +646,22 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
                   bg: AppColors.gold,
                   border: Colors.transparent,
                   shadow: AppColors.gold.withValues(alpha: 0.25),
-                  onTap: () => _recordMake(swish: true))),
-        )),
+                  onTap: () => _applyMake(swish: true)),
+            ),
+          ),
+        ),
       ]);
+
+  // ── Util bar (Undo / Voice / Tips) ────────────────────────────────────────
 
   Widget _utilBar() => Row(children: [
         _UtilBtn(
             icon: Icons.undo_rounded,
             label: 'Undo',
             enabled: _log.isNotEmpty,
-            onTap: _undo),
+            onTap: _applyUndo),
         const SizedBox(width: 10),
-        Expanded(
-            child: GestureDetector(
-          onTap: _toggleVoice,
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 200),
-            height: 48,
-            decoration: BoxDecoration(
-              color: _voiceOn
-                  ? AppColors.gold.withValues(alpha: 0.10)
-                  : AppColors.surface,
-              border: Border.all(
-                  color: _voiceOn
-                      ? AppColors.gold.withValues(alpha: 0.45)
-                      : AppColors.border),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-              // Dot pulsuje tylko gdy aktywnie nasłuchuje (nie miga przy restarcie
-              // bo _pulsCtrl jest ciągłe – zmienia się tylko opacity przez _voiceActive)
-              if (_voiceOn)
-                AnimatedBuilder(
-                  animation: _pulsCtrl,
-                  builder: (_, __) => AnimatedOpacity(
-                    opacity: _voiceActive ? 1.0 : 0.3,
-                    duration: const Duration(milliseconds: 200),
-                    child: Container(
-                      width: 7,
-                      height: 7,
-                      margin: const EdgeInsets.only(right: 8),
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: AppColors.gold
-                            .withValues(alpha: 0.35 + 0.65 * _pulsCtrl.value),
-                      ),
-                    ),
-                  ),
-                ),
-              Icon(
-                !_voice.available
-                    ? Icons.mic_off_rounded
-                    : _voiceOn
-                        ? Icons.mic_rounded
-                        : Icons.mic_none_rounded,
-                size: 18,
-                color: !_voice.available
-                    ? AppColors.text3
-                    : _voiceOn
-                        ? AppColors.gold
-                        : AppColors.text3,
-              ),
-              const SizedBox(width: 8),
-              Text(
-                // KLUCZOWE: tekst NIE zmienia się podczas restartu – tylko "Słucham"
-                // To eliminuje migotanie Wznawiam↔Słucham
-                !_voice.available
-                    ? 'Mic niedostępny'
-                    : _voiceOn
-                        ? 'Słucham…'
-                        : 'Voice Mode',
-                style: AppText.ui(13,
-                    weight: FontWeight.w600,
-                    color: !_voice.available
-                        ? AppColors.text3
-                        : _voiceOn
-                            ? AppColors.gold
-                            : AppColors.text3),
-              ),
-            ]),
-          ),
-        )),
+        Expanded(child: _voiceButton()),
         const SizedBox(width: 10),
         _UtilBtn(
           icon: Icons.info_outline_rounded,
@@ -926,11 +673,81 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
               builder: (_) => const _VoiceTipsSheet()),
         ),
       ]);
+
+  // ── Voice Button ──────────────────────────────────────────────────────────
+  //
+  //  Stany:
+  //  • !_voiceOn              → szary,  "Voice Mode"
+  //  • _voiceOn && !_ready   → złoty,  "Ładuję…"  (modele się ładują)
+  //  • _voiceOn && _ready    → złoty,  "Słucham…" + pulsujący dot
+  //  Tekst NIE zmienia się podczas restartu VAD → zero migotania
+
+  Widget _voiceButton() => GestureDetector(
+        onTap: _toggleVoice,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          height: 48,
+          decoration: BoxDecoration(
+            color: _voiceOn
+                ? AppColors.gold.withValues(alpha: 0.10)
+                : AppColors.surface,
+            border: Border.all(
+                color: _voiceOn
+                    ? AppColors.gold.withValues(alpha: 0.45)
+                    : AppColors.border),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+            // Pulsujący dot – tylko gdy VAD aktywnie wykrywa mowę
+            if (_voiceOn && _serviceReady)
+              AnimatedBuilder(
+                animation: _pulsCtrl,
+                builder: (_, __) => AnimatedOpacity(
+                  opacity: _voiceActive ? 1.0 : 0.3,
+                  duration: const Duration(milliseconds: 200),
+                  child: Container(
+                    width: 7,
+                    height: 7,
+                    margin: const EdgeInsets.only(right: 8),
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: AppColors.gold
+                          .withValues(alpha: 0.35 + 0.65 * _pulsCtrl.value),
+                    ),
+                  ),
+                ),
+              ),
+            // Spinner gdy modele się ładują
+            if (_voiceOn && !_serviceReady) ...[
+              const SizedBox(
+                  width: 14,
+                  height: 14,
+                  child: CircularProgressIndicator(
+                      color: AppColors.gold, strokeWidth: 2.0)),
+              const SizedBox(width: 8),
+            ] else
+              Icon(
+                _voiceOn ? Icons.mic_rounded : Icons.mic_none_rounded,
+                size: 18,
+                color: _voiceOn ? AppColors.gold : AppColors.text3,
+              ),
+            const SizedBox(width: 8),
+            Text(
+              _voiceOn
+                  ? (_serviceReady ? 'Słucham…' : 'Ładuję…')
+                  : 'Voice Mode',
+              style: AppText.ui(13,
+                  weight: FontWeight.w600,
+                  color: _voiceOn ? AppColors.gold : AppColors.text3),
+            ),
+          ]),
+        ),
+      );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════
 //  PAINTERS
-// ─────────────────────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════
 
 class _RingPainter extends CustomPainter {
   final double progress;
@@ -1012,7 +829,7 @@ class _TrendPainter extends CustomPainter {
               end: Alignment.bottomCenter,
               colors: [
                 color.withValues(alpha: 0.28),
-                color.withValues(alpha: 0)
+                color.withValues(alpha: 0),
               ],
             ).createShader(Rect.fromLTWH(0, 0, size.width, size.height)));
     }
@@ -1022,9 +839,9 @@ class _TrendPainter extends CustomPainter {
   bool shouldRepaint(covariant _TrendPainter o) => o.log.length != log.length;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  WIDGETS
-// ─────────────────────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════
+//  REUSABLE WIDGETS
+// ═══════════════════════════════════════════════════════════════════════════
 
 class _MiniStat extends StatelessWidget {
   final String label, value;
@@ -1152,9 +969,9 @@ class _BackBtn extends StatelessWidget {
       );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════
 //  SUMMARY SHEET
-// ─────────────────────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════
 
 class _SummarySheet extends StatefulWidget {
   final String label;
@@ -1190,6 +1007,7 @@ class _SummarySheetState extends State<_SummarySheet> {
   String get _pct => widget.attempts == 0
       ? '0%'
       : '${(widget.made / widget.attempts * 100).round()}%';
+
   String get _time {
     final m = widget.elapsed.inMinutes.remainder(60).toString().padLeft(2, '0');
     final s = widget.elapsed.inSeconds.remainder(60).toString().padLeft(2, '0');
@@ -1264,22 +1082,22 @@ class _SummarySheetState extends State<_SummarySheet> {
           border: Border.all(color: AppColors.border),
           borderRadius: BorderRadius.circular(24)),
       child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Center(
-                child: Container(
-                    width: 36,
-                    height: 3,
-                    margin: const EdgeInsets.only(bottom: 24),
-                    decoration: BoxDecoration(
-                        color: AppColors.border,
-                        borderRadius: BorderRadius.circular(2)))),
-            Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Expanded(
-                  child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Center(
+              child: Container(
+                  width: 36,
+                  height: 3,
+                  margin: const EdgeInsets.only(bottom: 24),
+                  decoration: BoxDecoration(
+                      color: AppColors.border,
+                      borderRadius: BorderRadius.circular(2)))),
+          Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Expanded(
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
                     Text('SESSION COMPLETE',
                         style: AppText.ui(10,
                             color: AppColors.text3,
@@ -1296,63 +1114,65 @@ class _SummarySheetState extends State<_SummarySheet> {
                       Text(_time,
                           style: AppText.ui(12, color: AppColors.text3)),
                     ]),
-                  ])),
-              Container(
-                  width: 64,
-                  height: 64,
-                  decoration: BoxDecoration(
-                      color: _gc.withValues(alpha: 0.08),
-                      border: Border.all(
-                          color: _gc.withValues(alpha: 0.4), width: 1.5),
-                      borderRadius: BorderRadius.circular(16)),
-                  child: Center(
-                      child: Text(_grade,
-                          style: AppText.display(34, color: _gc)))),
-            ]),
+                  ]),
+            ),
+            Container(
+                width: 64,
+                height: 64,
+                decoration: BoxDecoration(
+                    color: _gc.withValues(alpha: 0.08),
+                    border: Border.all(
+                        color: _gc.withValues(alpha: 0.4), width: 1.5),
+                    borderRadius: BorderRadius.circular(16)),
+                child: Center(
+                    child:
+                        Text(_grade, style: AppText.display(34, color: _gc)))),
+          ]),
+          const SizedBox(height: 20),
+          Container(height: 1, color: AppColors.borderSub),
+          const SizedBox(height: 18),
+          Row(children: [
+            _SumTile('MADE', '${widget.made}', AppColors.green),
+            _SumTile('SWISHES', '${widget.swishes}', AppColors.gold),
+            _SumTile('ACCURACY', _pct, _gc),
+            _SumTile('STREAK', '${widget.bestStreak}', AppColors.gold),
+          ]),
+          if (widget.log.isNotEmpty) ...[
             const SizedBox(height: 20),
-            Container(height: 1, color: AppColors.borderSub),
-            const SizedBox(height: 18),
-            Row(children: [
-              _SumTile('MADE', '${widget.made}', AppColors.green),
-              _SumTile('SWISHES', '${widget.swishes}', AppColors.gold),
-              _SumTile('ACCURACY', _pct, _gc),
-              _SumTile('STREAK', '${widget.bestStreak}', AppColors.gold),
-            ]),
-            if (widget.log.isNotEmpty) ...[
-              const SizedBox(height: 20),
-              Text('SHOT LOG',
-                  style: AppText.ui(10,
-                      color: AppColors.text3,
-                      letterSpacing: 1.8,
-                      weight: FontWeight.w700)),
-              const SizedBox(height: 10),
-              Wrap(
-                  spacing: 5,
-                  runSpacing: 5,
-                  children: widget.log
-                      .take(50)
-                      .map((r) => Container(
-                            width: 10,
-                            height: 10,
-                            decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                color: r == ShotResult.swish
-                                    ? AppColors.gold
-                                    : r == ShotResult.make
-                                        ? AppColors.green
-                                        : AppColors.red),
-                          ))
-                      .toList()),
-              if (widget.log.length > 50) ...[
-                const SizedBox(height: 6),
-                Text('+ ${widget.log.length - 50} more',
-                    style: AppText.ui(10, color: AppColors.text3)),
-              ],
+            Text('SHOT LOG',
+                style: AppText.ui(10,
+                    color: AppColors.text3,
+                    letterSpacing: 1.8,
+                    weight: FontWeight.w700)),
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 5,
+              runSpacing: 5,
+              children: widget.log
+                  .take(50)
+                  .map((r) => Container(
+                        width: 10,
+                        height: 10,
+                        decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: r == ShotResult.swish
+                                ? AppColors.gold
+                                : r == ShotResult.make
+                                    ? AppColors.green
+                                    : AppColors.red),
+                      ))
+                  .toList(),
+            ),
+            if (widget.log.length > 50) ...[
+              const SizedBox(height: 6),
+              Text('+ ${widget.log.length - 50} more',
+                  style: AppText.ui(10, color: AppColors.text3)),
             ],
-            const SizedBox(height: 28),
-            Row(children: [
-              Expanded(
-                  child: GestureDetector(
+          ],
+          const SizedBox(height: 28),
+          Row(children: [
+            Expanded(
+              child: GestureDetector(
                 onTap: widget.onDiscard,
                 child: Container(
                     height: 52,
@@ -1364,10 +1184,11 @@ class _SummarySheetState extends State<_SummarySheet> {
                             style: AppText.ui(14,
                                 weight: FontWeight.w700,
                                 color: AppColors.text2)))),
-              )),
-              const SizedBox(width: 12),
-              Expanded(
-                  child: GestureDetector(
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: GestureDetector(
                 onTap: _saving ? null : _save,
                 child: Container(
                     height: 52,
@@ -1385,9 +1206,11 @@ class _SummarySheetState extends State<_SummarySheet> {
                                 style: AppText.ui(14,
                                     weight: FontWeight.w700,
                                     color: AppColors.bg)))),
-              )),
-            ]),
+              ),
+            ),
           ]),
+        ],
+      ),
     );
   }
 }
@@ -1399,18 +1222,19 @@ class _SumTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Expanded(
-          child: Column(children: [
-        Text(value,
-            style: AppText.ui(19, weight: FontWeight.w700, color: color)),
-        const SizedBox(height: 3),
-        Text(label,
-            style: AppText.ui(9, color: AppColors.text3, letterSpacing: 0.8)),
-      ]));
+        child: Column(children: [
+          Text(value,
+              style: AppText.ui(19, weight: FontWeight.w700, color: color)),
+          const SizedBox(height: 3),
+          Text(label,
+              style: AppText.ui(9, color: AppColors.text3, letterSpacing: 0.8)),
+        ]),
+      );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  VOICE TIPS
-// ─────────────────────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════
+//  VOICE TIPS SHEET
+// ═══════════════════════════════════════════════════════════════════════════
 
 class _VoiceTipsSheet extends StatelessWidget {
   const _VoiceTipsSheet();
@@ -1424,6 +1248,7 @@ class _VoiceTipsSheet extends StatelessWidget {
       ('"cofnij" / "undo" / "anuluj"', 'Cofnij', AppColors.blue),
       ('"koniec" / "stop" / "finish"', 'Koniec sesji', AppColors.text2),
     ];
+
     return Container(
       margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
       padding: const EdgeInsets.all(24),
@@ -1432,58 +1257,58 @@ class _VoiceTipsSheet extends StatelessWidget {
           border: Border.all(color: AppColors.border),
           borderRadius: BorderRadius.circular(24)),
       child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Center(
-                child: Container(
-                    width: 36,
-                    height: 3,
-                    margin: const EdgeInsets.only(bottom: 20),
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Center(
+              child: Container(
+                  width: 36,
+                  height: 3,
+                  margin: const EdgeInsets.only(bottom: 20),
+                  decoration: BoxDecoration(
+                      color: AppColors.border,
+                      borderRadius: BorderRadius.circular(2)))),
+          Text('KOMENDY GŁOSOWE',
+              style: AppText.ui(10,
+                  color: AppColors.text3,
+                  letterSpacing: 1.8,
+                  weight: FontWeight.w700)),
+          const SizedBox(height: 16),
+          ...tips.map((t) => Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: Row(children: [
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                     decoration: BoxDecoration(
-                        color: AppColors.border,
-                        borderRadius: BorderRadius.circular(2)))),
-            Text('KOMENDY GŁOSOWE',
-                style: AppText.ui(10,
-                    color: AppColors.text3,
-                    letterSpacing: 1.8,
-                    weight: FontWeight.w700)),
-            const SizedBox(height: 16),
-            ...tips.map((t) => Padding(
-                  padding: const EdgeInsets.only(bottom: 10),
-                  child: Row(children: [
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 10, vertical: 5),
-                      decoration: BoxDecoration(
-                          color: t.$3.withValues(alpha: 0.1),
-                          border:
-                              Border.all(color: t.$3.withValues(alpha: 0.3)),
-                          borderRadius: BorderRadius.circular(8)),
-                      child: Text(t.$1,
-                          style: AppText.ui(12,
-                              weight: FontWeight.w700, color: t.$3)),
-                    ),
-                    const SizedBox(width: 12),
-                    Text(t.$2, style: AppText.ui(13, color: AppColors.text2)),
-                  ]),
-                )),
-            const SizedBox(height: 6),
-            Container(
-              padding: const EdgeInsets.all(11),
-              decoration: BoxDecoration(
-                  color: AppColors.surfaceHi,
-                  borderRadius: BorderRadius.circular(8)),
-              child: Row(children: [
-                const Icon(Icons.bolt_rounded, size: 15, color: AppColors.gold),
-                const SizedBox(width: 8),
-                Expanded(
-                    child: Text(
-                        'Komendy działają natychmiast – możesz mówić bez czekania',
-                        style: AppText.ui(12, color: AppColors.text3))),
-              ]),
-            ),
-          ]),
+                        color: t.$3.withValues(alpha: 0.1),
+                        border: Border.all(color: t.$3.withValues(alpha: 0.3)),
+                        borderRadius: BorderRadius.circular(8)),
+                    child: Text(t.$1,
+                        style: AppText.ui(12,
+                            weight: FontWeight.w700, color: t.$3)),
+                  ),
+                  const SizedBox(width: 12),
+                  Text(t.$2, style: AppText.ui(13, color: AppColors.text2)),
+                ]),
+              )),
+          const SizedBox(height: 6),
+          Container(
+            padding: const EdgeInsets.all(11),
+            decoration: BoxDecoration(
+                color: AppColors.surfaceHi,
+                borderRadius: BorderRadius.circular(8)),
+            child: Row(children: [
+              const Icon(Icons.bolt_rounded, size: 15, color: AppColors.gold),
+              const SizedBox(width: 8),
+              Expanded(
+                  child: Text(
+                      'Rozpoznawanie mowy działa offline – zero chmury, zero opóźnień sieciowych',
+                      style: AppText.ui(12, color: AppColors.text3))),
+            ]),
+          ),
+        ],
+      ),
     );
   }
 }

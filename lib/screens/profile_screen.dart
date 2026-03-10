@@ -11,15 +11,26 @@ class ProfileScreen extends StatefulWidget {
 }
 
 class _ProfileScreenState extends State<ProfileScreen> {
+  final _authService = AuthService();
+
   // Symulacja danych użytkownika (docelowo z bazy/Providera)
-  String _name = 'Filip Piątek';
   bool _isPro = false;
   String? _selectedAvatar;
   String _voiceLanguage = 'Polski';
 
+  String get _userName {
+    final user = _authService.currentUser;
+    if (user == null) return 'Player';
+    final meta = user.userMetadata;
+    if (meta != null && meta['display_name'] != null) {
+      return meta['display_name'] as String;
+    }
+    return user.email?.split('@').first ?? 'Player';
+  }
+
   void _showEditProfile() {
     final TextEditingController nameController =
-        TextEditingController(text: _name);
+        TextEditingController(text: _userName);
 
     showModalBottomSheet(
       context: context,
@@ -70,10 +81,20 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
             // Save Button
             GestureDetector(
-              onTap: () {
-                setState(() => _name = nameController.text);
-                Navigator.pop(context);
+              onTap: () async {
                 HapticFeedback.mediumImpact();
+                final navigator = Navigator.of(context);
+                try {
+                  await _authService.updateUserMetadata(
+                      {'display_name': nameController.text});
+                  if (mounted) {
+                    setState(() {});
+                    navigator.pop();
+                  }
+                } catch (e) {
+                  debugPrint('Update profile error: $e');
+                  // Optional: show error toast/banner
+                }
               },
               child: Container(
                 height: 54,
@@ -353,7 +374,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  _name,
+                  _userName,
                   style: AppText.ui(20,
                       weight: FontWeight.w700, color: Colors.white),
                   maxLines: 1,
@@ -371,8 +392,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   Widget _buildAvatar() {
     // Pobieranie inicjałów z nazwy (do 2 liter)
-    String initials = _name.trim().isNotEmpty
-        ? _name
+    String initials = _userName.trim().isNotEmpty
+        ? _userName
             .trim()
             .split(' ')
             .take(2)
