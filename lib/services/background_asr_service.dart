@@ -12,6 +12,8 @@
 //  ┌──────────────────────────────────────▼──────────────────────────────┐
 //  │  Background Isolate (Foreground Service)                            │
 //  │                                                                     │
+//  │  ModelExtractor ──copy assets──▶ absolutne ścieżki na dysku        │
+//  │       │                                                             │
 //  │  AudioRouter ──configure──▶ audio_session (iOS/Android BT)         │
 //  │       │                                                             │
 //  │  AudioRecorder (record pkg) ──PCM 16 kHz──▶ RingBuffer             │
@@ -28,14 +30,13 @@
 //  │                                          service.invoke(event)      │
 //  └─────────────────────────────────────────────────────────────────────┘
 //
-//  Kluczowe decyzje projektowe:
-//  - VAD (Silero) jako "strażnik" CPU: pełne dekodowanie ASR odpala się
-//    tylko gdy algorytm wykryje ludzki głos → oszczędność baterii ~60-70%.
-//  - Gramatyka zawężona do 4 tokenów: punkt / pudło / cofnij / [unk]
-//    Eliminuje fałszywe alarmy od uderzeń piłki i szumu sali.
-//  - Cały pipeline audio (nagrywanie + VAD + ASR + feedback) żyje
-//    w tym samym izolcie tła, nie przekraczamy granicy izolatu dla audio.
-//  - duckOthers: muzyka z Spotify zostanie przyciszona, nie wstrzymana.
+//  KLUCZOWA ZMIANA vs poprzednia wersja:
+//  - sherpa_onnx wymaga ABSOLUTNYCH ścieżek plików na dysku.
+//    Ścieżki 'assets/models/...' NIE działają – assets są spakowane
+//    w binarce aplikacji, nie istnieją jako pliki systemu plików.
+//  - ModelExtractor (lib/services/model_extractor.dart) kopiuje modele
+//    z asset bundle do getApplicationSupportDirectory() przy pierwszym
+//    uruchomieniu, potem używa cache.
 // ═══════════════════════════════════════════════════════════════════════════
 
 import 'dart:async';
@@ -48,8 +49,11 @@ import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:just_audio/just_audio.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
 import 'package:sherpa_onnx/sherpa_onnx.dart' as sherpa;
+
+import 'model_extractor.dart';
 
 // ─── Stałe zdarzeń IPC (tło → UI) ─────────────────────────────────────────
 
@@ -60,6 +64,7 @@ class AsrEvents {
   static const shotUndo = 'shot_undo';
   static const finish = 'finish';
   static const voiceState = 'voice_state'; // {active: bool}
+  static const status = 'status'; // {msg: String} – debug panel w UI
   static const error = 'error'; // {message: String}
 }
 
@@ -69,6 +74,13 @@ class AsrCommands {
   static const startListening = 'start_listening';
   static const stopListening = 'stop_listening';
   static const shutdown = 'shutdown';
+}
+
+// ─── Helper statusu – wysyła do UI i drukuje w konsoli ─────────────────────
+
+void _status(ServiceInstance svc, String msg) {
+  debugPrint('[BG] $msg');
+  svc.invoke(AsrEvents.status, {'msg': msg});
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -85,21 +97,16 @@ Future<void> initBackgroundService() async {
       isForegroundMode: true,
       autoStart: false,
       autoStartOnBoot: false,
-      // Powiadomienie kanałowe wymagane przez Android 8+
       notificationChannelId: 'bball_tracking',
       initialNotificationTitle: 'Basketball Tracker',
       initialNotificationContent: 'Nasłuchuję komend...',
       foregroundServiceNotificationId: 888,
-      // Typ usługi wymagany od Android 14 dla mikrofonu
       foregroundServiceTypes: const [
         AndroidForegroundType.microphone,
       ],
     ),
 
     // ── iOS: background processing ─────────────────────────────────────────
-    // Wymagane wpisy w Info.plist:
-    //   UIBackgroundModes: audio, processing
-    //   BGTaskSchedulerPermittedIdentifiers: com.yourapp.asr
     iosConfiguration: IosConfiguration(
       onForeground: _onServiceStart,
       onBackground: _onIosBackground,
@@ -108,7 +115,6 @@ Future<void> initBackgroundService() async {
   );
 }
 
-// iOS wymaga handlera tła zwracającego bool
 @pragma('vm:entry-point')
 Future<bool> _onIosBackground(ServiceInstance service) async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -125,24 +131,85 @@ void _onServiceStart(ServiceInstance service) async {
   WidgetsFlutterBinding.ensureInitialized();
   DartPluginRegistrant.ensureInitialized();
 
-  debugPrint('[BG] Usługa ASR uruchomiona');
+  _status(service, 'Usługa uruchomiona');
 
   // ── 1. Konfiguracja sesji audio (PRZED wszystkim innym) ──────────────────
   final audioRouter = AudioRouter();
-  await audioRouter.configure();
+  try {
+    await audioRouter.configure();
+    _status(service, 'Audio session OK');
+  } catch (e) {
+    _status(service, 'Audio session BŁĄD: $e');
+  }
 
-  // ── 2. Silnik ASR ──────────────────────────────────────────────────────
-  final asrEngine = AsrEngine();
-  await asrEngine.init();
+  // ── 2. Kopiuj modele z assets → absolutne ścieżki na dysku ──────────────
+  //
+  //  KLUCZOWE: sherpa_onnx nie potrafi czytać plików z Flutter asset bundle.
+  //  ModelExtractor kopiuje je do getApplicationSupportDirectory() raz,
+  //  przy kolejnych uruchomieniach używa cache (pliki już istnieją).
+  //
+  _status(service, 'Kopiuję modele...');
+  Map<String, String> modelPaths;
+  try {
+    modelPaths = await ModelExtractor.extractAll();
+    _status(service, 'Modele gotowe ✓');
+  } catch (e) {
+    _status(service, 'Modele BŁĄD: $e');
+    service.invoke(AsrEvents.error, {'message': 'Model extraction failed: $e'});
+    return;
+  }
 
-  // ── 3. Odtwarzacz feedbacku ────────────────────────────────────────────
+  // ── 3. Plik keywords – też musi być absolutną ścieżką ───────────────────
+  //
+  //  Directory.systemTemp jest niedostępny na iOS w izolacje tła.
+  //  Używamy getApplicationSupportDirectory() – zawsze dostępne.
+  //
+  String keywordsPath;
+  try {
+    final dir = await getApplicationSupportDirectory();
+    keywordsPath = '${dir.path}/kws_keywords.txt';
+    await File(keywordsPath).writeAsString(
+      'MAKE @1.5\nSWISH @1.5\nMISS @1.5\nUNDO @1.5\nDONE @1.5\n',
+    );
+    _status(service, 'Keywords OK');
+  } catch (e) {
+    _status(service, 'Keywords BŁĄD: $e');
+    service.invoke(AsrEvents.error, {'message': 'Keywords file failed: $e'});
+    return;
+  }
+
+  // ── 4. Silnik ASR ──────────────────────────────────────────────────────
+  final asrEngine = AsrEngine(
+    vadModelPath: modelPaths['silero_vad.onnx']!,
+    encoderPath: modelPaths['kws_encoder.onnx']!,
+    decoderPath: modelPaths['kws_decoder.onnx']!,
+    joinerPath: modelPaths['kws_joiner.onnx']!,
+    tokensPath: modelPaths['kws_tokens.txt']!,
+    keywordsFilePath: keywordsPath,
+  );
+
+  try {
+    await asrEngine.init();
+    _status(service, 'ASR Engine OK ✓');
+  } catch (e) {
+    _status(service, 'ASR init BŁĄD: $e');
+    service.invoke(AsrEvents.error, {'message': 'ASR init failed: $e'});
+    return;
+  }
+
+  // ── 5. Odtwarzacz feedbacku ────────────────────────────────────────────
   final feedback = AudioFeedback();
-  await feedback.init();
+  try {
+    await feedback.init();
+    _status(service, 'Dźwięki OK ✓');
+  } catch (e) {
+    // Nie przerywamy – aplikacja działa bez dźwięku
+    _status(service, 'Dźwięki BŁĄD: $e (kontynuuję)');
+  }
 
-  // ── 4. Przekazanie callbacków wyniku ASR ──────────────────────────────
+  // ── 6. Przekazanie callbacków wyniku ASR ──────────────────────────────
   asrEngine.onKeyword = (String keyword) async {
-    debugPrint('[BG] Keyword: $keyword');
-
+    _status(service, '🎤 "$keyword"');
     switch (keyword) {
       case 'make':
         await feedback.playMake();
@@ -160,7 +227,7 @@ void _onServiceStart(ServiceInstance service) async {
         await feedback.playUndo();
         service.invoke(AsrEvents.shotUndo, {});
         break;
-      case 'end':
+      case 'done':
         await feedback.playEnd();
         service.invoke(AsrEvents.finish, {});
         break;
@@ -171,17 +238,24 @@ void _onServiceStart(ServiceInstance service) async {
     service.invoke(AsrEvents.voiceState, {'active': active});
   };
 
-  // ── 5. Komendy z UI ────────────────────────────────────────────────────
+  // ── 7. Komendy z UI ────────────────────────────────────────────────────
   service.on(AsrCommands.startListening).listen((_) async {
-    debugPrint('[BG] Start listening');
-    await audioRouter.activateForRecording();
-    await asrEngine.start();
+    _status(service, 'Start nasłuchiwania...');
+    try {
+      await audioRouter.activateForRecording();
+      await asrEngine.start();
+      _status(service, 'Nasłuchuję ✓');
+    } catch (e) {
+      _status(service, 'Start BŁĄD: $e');
+      service.invoke(AsrEvents.error, {'message': 'Start failed: $e'});
+    }
   });
 
   service.on(AsrCommands.stopListening).listen((_) async {
     debugPrint('[BG] Stop listening');
     await asrEngine.stop();
     await audioRouter.deactivate();
+    _status(service, 'Zatrzymano');
   });
 
   service.on(AsrCommands.shutdown).listen((_) async {
@@ -193,9 +267,7 @@ void _onServiceStart(ServiceInstance service) async {
     service.stopSelf();
   });
 
-  // Podtrzymaj usługę (Android wymaga periodicHeartbeat lub pętli)
-  // flutter_background_service utrzymuje ją jako foreground – wystarczy
-  debugPrint('[BG] Usługa ASR gotowa, czeka na komendy');
+  _status(service, 'Gotowy – czekam na start_listening');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -205,19 +277,10 @@ void _onServiceStart(ServiceInstance service) async {
 class AudioRouter {
   AudioSession? _session;
 
-  /// Konfiguracja jednorazowa przy starcie usługi.
   Future<void> configure() async {
     _session = await AudioSession.instance;
 
     if (Platform.isIOS) {
-      // ── iOS: playAndRecord + allowBluetooth + defaultToSpeaker ──────────
-      //
-      //  allowBluetooth:    włącza profil HFP (mikrofon BT)
-      //  allowBluetoothA2DP: wyjście audio przez A2DP (lepszy dźwięk)
-      //  allowBluetoothA2D: wyjście audio przez A2DP (lepszy dźwięk)
-      //  defaultToSpeaker:  fallback gdy brak słuchawek → głośnik, nie ucho
-      //  duckOthers:        przycisza Spotify/muzykę zamiast pauzować ✓
-      //
       await _session!.configure(AudioSessionConfiguration(
         avAudioSessionCategory: AVAudioSessionCategory.playAndRecord,
         avAudioSessionCategoryOptions:
@@ -234,13 +297,11 @@ class AudioRouter {
           usage: AndroidAudioUsage.assistanceSonification,
         ),
         androidAudioFocusGainType:
-            AndroidAudioFocusGainType.gainTransientMayDuck, // duck, nie pauzuj
+            AndroidAudioFocusGainType.gainTransientMayDuck,
         androidWillPauseWhenDucked: false,
       ));
-
       debugPrint('[AudioRouter] iOS skonfigurowany: playAndRecord + BT + duck');
     } else if (Platform.isAndroid) {
-      // ── Android: konfiguracja bazowa, routing BT dynamicznie ────────────
       await _session!.configure(const AudioSessionConfiguration(
         androidAudioAttributes: AndroidAudioAttributes(
           contentType: AndroidAudioContentType.sonification,
@@ -250,64 +311,35 @@ class AudioRouter {
             AndroidAudioFocusGainType.gainTransientMayDuck,
         androidWillPauseWhenDucked: false,
       ));
-
       debugPrint('[AudioRouter] Android skonfigurowany: base + duck');
     }
   }
 
-  /// Aktywuje sesję przed nagrywaniem i włącza SCO jeśli potrzeba.
   Future<void> activateForRecording() async {
     if (_session == null) return;
     await _session!.setActive(true);
-
-    if (Platform.isAndroid) {
-      await _activateAndroidBluetooth();
-    }
+    if (Platform.isAndroid) await _activateAndroidBluetooth();
   }
 
-  /// Dezaktywuje sesję gdy przestajemy nagrywać.
   Future<void> deactivate() async {
     if (_session == null) return;
-    if (Platform.isAndroid) {
-      await _deactivateAndroidBluetooth();
-    }
+    if (Platform.isAndroid) await _deactivateAndroidBluetooth();
     await _session!.setActive(false);
     debugPrint('[AudioRouter] Sesja audio dezaktywowana');
   }
-
-  // ── Android SCO (mikrofon Bluetooth) ──────────────────────────────────
-  //
-  //  SCO (Synchronous Connection-Oriented) to profil wymagany do jednoczesnego
-  //  nagrywania i odtwarzania przez słuchawki BT. Bez niego mikrofon BT
-  //  jest niedostępny. A2DP to profil tylko-odsłuch (lepsza jakość audio
-  //  wyjściowego, ale BRAK mikrofonu).
-  //
-  //  Logika:
-  //  1. Sprawdź, czy jakiekolwiek urządzenie SCO jest sparowane i połączone
-  //  2. Jeśli tak → startBluetoothSco() → setSpeakerphoneOn(false)
-  //  3. Jeśli nie → setSpeakerphoneOn(true) → wbudowany mikrofon + głośnik
-  //
-  //  UWAGA: startBluetoothSco() wymaga permisji BLUETOOTH_CONNECT (Android 12+)
-  //  oraz RECORD_AUDIO. Dodaj je do AndroidManifest.xml.
-  //
-  //  Implementacja przez MethodChannel – bardziej niezawodna niż pakiety
-  //  trzecich stron, które często nie nadążają za zmianami API Android.
 
   static const _btChannel = MethodChannel('com.yourapp/bluetooth_sco');
   bool _scoActive = false;
 
   Future<void> _activateAndroidBluetooth() async {
     try {
-      // Sprawdź czy jakieś urządzenie SCO jest gotowe
       final hasSco =
           await _btChannel.invokeMethod<bool>('hasScoDevice') ?? false;
-
       if (hasSco) {
         await _btChannel.invokeMethod('startSco');
         _scoActive = true;
         debugPrint('[AudioRouter] Android: SCO aktywowane');
       } else {
-        // Brak BT → użyj wbudowanego mikrofonu i głośnika
         await _btChannel.invokeMethod('setSpeakerphoneOn', true);
         debugPrint('[AudioRouter] Android: głośnik wbudowany (brak BT)');
       }
@@ -333,6 +365,14 @@ class AudioRouter {
 // ═══════════════════════════════════════════════════════════════════════════
 
 class AsrEngine {
+  // Absolutne ścieżki plików – przekazane z ModelExtractor
+  final String vadModelPath;
+  final String encoderPath;
+  final String decoderPath;
+  final String joinerPath;
+  final String tokensPath;
+  final String keywordsFilePath;
+
   static const int _kSampleRate = 16000;
 
   sherpa.VoiceActivityDetector? _vad;
@@ -342,28 +382,32 @@ class AsrEngine {
   StreamSubscription<Uint8List>? _audioSub;
 
   bool _running = false;
-  bool _vadActive = false; // czy VAD aktualnie wykrywa mowę
+  bool _vadActive = false;
 
-  // Bufor kołowy – trzyma próbki z okna VAD do przekazania do spottera
   final List<Float32List> _speechBuffer = [];
 
   void Function(String keyword)? onKeyword;
   void Function(bool active)? onVadStateChange;
 
-  // ── Inicjalizacja modeli ───────────────────────────────────────────────
+  AsrEngine({
+    required this.vadModelPath,
+    required this.encoderPath,
+    required this.decoderPath,
+    required this.joinerPath,
+    required this.tokensPath,
+    required this.keywordsFilePath,
+  });
+
   Future<void> init() async {
     debugPrint('[ASR] Inicjalizacja modeli...');
+    debugPrint('[ASR] VAD: $vadModelPath');
+    debugPrint('[ASR] Encoder: $encoderPath');
+    debugPrint('[ASR] Keywords: $keywordsFilePath');
 
-    // ── VAD: Silero (wbudowany w sherpa_onnx) ─────────────────────────────
-    //
-    //  silero_vad.onnx: ~1.8MB, <1% CPU przy 16kHz
-    //  threshold 0.45: wyważony próg – nie za czuły na szumy sali
-    //  minSpeechDuration 0.2s: ignoruje krótkie kliknięcia/uderzenia piłki
-    //  minSilenceDuration 0.3s: jak długo cisza musi trwać by zakończyć segment
-    //
+    // ── VAD: Silero ────────────────────────────────────────────────────────
     final vadConfig = sherpa.VadModelConfig(
-      sileroVad: const sherpa.SileroVadModelConfig(
-        model: 'assets/models/silero_vad.onnx',
+      sileroVad: sherpa.SileroVadModelConfig(
+        model: vadModelPath, // ABSOLUTNA ścieżka na dysku
         threshold: 0.45,
         minSilenceDuration: 0.30,
         minSpeechDuration: 0.20,
@@ -380,66 +424,39 @@ class AsrEngine {
       bufferSizeInSeconds: 30,
     );
 
-    // ── Keyword Spotter (Zipformer CTC lub Conformer) ─────────────────────
-    //
-    //  Słownik zawężony do TYLKO: punkt / pudło / cofnij / koniec
-    //  [unk] jako catch-all – odrzuca wszystkie inne dźwięki
-    //
-    //  keywords_score: jak pewnie musi być model by zaraportować trafienie
-    //  keywords_threshold: minimalny wynik CTC
-    //  Wyższe wartości = mniej false-positive, ale też miss-ów
-    //
-    //  Model zalecany: sherpa-onnx-kws-zipformer-wenetspeech-3.3M-2024-01-01
-    //  (dostępny na huggingface.co/k2-fsa/sherpa-onnx-kws-zipformer-*)
-    //  lub dowolny model obsługujący polski słownik.
-    //
-    // Keyword spotting w sherpa_onnka wymaga pliku. Tworzymy tymczasowy.
-    final directory = Directory.systemTemp.path;
-    final keywordsPath = '$directory/keywords.txt';
-    const keywordsContent = '''
-make @1.5
-swish @1.5
-miss @1.5
-undo @1.5
-end @1.5
-''';
-    await File(keywordsPath).writeAsString(keywordsContent);
-
+    // ── Keyword Spotter ────────────────────────────────────────────────────
     final spotterConfig = sherpa.KeywordSpotterConfig(
-      model: const sherpa.OnlineModelConfig(
+      model: sherpa.OnlineModelConfig(
         transducer: sherpa.OnlineTransducerModelConfig(
-          encoder: 'assets/models/kws/encoder.onnx',
-          decoder: 'assets/models/kws/decoder.onnx',
-          joiner: 'assets/models/kws/joiner.onnx',
+          encoder: encoderPath, // ABSOLUTNA ścieżka na dysku
+          decoder: decoderPath,
+          joiner: joinerPath,
         ),
-        tokens: 'assets/models/kws/tokens.txt',
+        tokens: tokensPath, // ABSOLUTNA ścieżka na dysku
         numThreads: 2,
         debug: false,
       ),
-      keywordsFile: keywordsPath,
+      keywordsFile: keywordsFilePath, // ABSOLUTNA ścieżka na dysku
     );
 
     _spotter = sherpa.KeywordSpotter(spotterConfig);
-
     debugPrint('[ASR] Modele załadowane: VAD + KeywordSpotter');
   }
 
-  // ── Start nasłuchiwania ───────────────────────────────────────────────
   Future<void> start() async {
     if (_running) return;
     _running = true;
     _speechBuffer.clear();
 
     _recorder = AudioRecorder();
-
     final stream = await _recorder!.startStream(
       const RecordConfig(
-        encoder: AudioEncoder.pcm16bits, // raw PCM → bezpośrednio do sherpa
+        encoder: AudioEncoder.pcm16bits,
         sampleRate: _kSampleRate,
-        numChannels: 1, // mono
+        numChannels: 1,
         autoGain: true,
-        echoCancel: true, // redukuje echo głośnika telefonu
-        noiseSuppress: true, // redukuje szumy sali
+        echoCancel: true,
+        noiseSuppress: true,
         bitRate: 256000,
       ),
     );
@@ -452,7 +469,6 @@ end @1.5
     debugPrint('[ASR] Nagrywanie PCM 16kHz mono – start');
   }
 
-  // ── Stop nasłuchiwania ────────────────────────────────────────────────
   Future<void> stop() async {
     if (!_running) return;
     _running = false;
@@ -477,43 +493,26 @@ end @1.5
     _spotter = null;
   }
 
-  // ── Główny pipeline przetwarzania audio ──────────────────────────────
-  //
-  //  Przepływ:
-  //  1. Konwertuj bytes (Int16 PCM) → Float32 normalized [-1.0, 1.0]
-  //  2. Przekaż do VAD – sprawdź czy to mowa czy cisza/szum
-  //  3a. Cisza → wyczyść bufor, nie rób nic (oszczędność CPU)
-  //  3b. Mowa → buforuj próbki + przekaż do keyword spottera
-  //  4. Spotter zwraca keyword lub null
-  //
   void _processAudioChunk(Uint8List bytes) {
     if (_vad == null || _spotter == null) return;
 
-    // Konwersja Int16 Little-Endian → Float32 [-1, 1]
     final samples = _int16BytesToFloat32(bytes);
-
-    // ── Krok 1: VAD ────────────────────────────────────────────────────
     _vad!.acceptWaveform(samples);
 
     bool speechNow = false;
 
-    // Przetwarzaj wszystkie gotowe segmenty z bufora VAD
     while (!_vad!.isEmpty()) {
       final segment = _vad!.front();
       _vad!.pop();
-
       if (segment.samples.isEmpty) continue;
-
       speechNow = true;
 
-      // ── Krok 2: Przekaż do keyword spottera ────────────────────────
       final stream = _spotter!.createStream();
       stream.acceptWaveform(
         samples: segment.samples,
         sampleRate: _kSampleRate,
       );
       _spotter!.decode(stream);
-
       final result = _spotter!.getResult(stream);
       stream.free();
 
@@ -524,20 +523,17 @@ end @1.5
       }
     }
 
-    // Powiadom UI o zmianie stanu VAD (tylko przy zmianie)
     if (speechNow != _vadActive) {
       _vadActive = speechNow;
       onVadStateChange?.call(_vadActive);
     }
   }
 
-  // ── Konwersja Int16 PCM → Float32 ────────────────────────────────────
   static Float32List _int16BytesToFloat32(Uint8List bytes) {
     final samples = Float32List(bytes.length ~/ 2);
     final byteData = bytes.buffer.asByteData();
     for (int i = 0; i < samples.length; i++) {
-      final int16 = byteData.getInt16(i * 2, Endian.little);
-      samples[i] = int16 / 32768.0;
+      samples[i] = byteData.getInt16(i * 2, Endian.little) / 32768.0;
     }
     return samples;
   }
@@ -545,15 +541,6 @@ end @1.5
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  AUDIO FEEDBACK – just_audio, niskie opóźnienie
-// ═══════════════════════════════════════════════════════════════════════════
-//
-//  Dlaczego just_audio a nie audioplayers?
-//  - just_audio buforuje asset przy setAudioSource() → play() jest natychmiastowy
-//  - Obsługuje natywny dekoder platformy (AAC na iOS, ExoPlayer na Android)
-//  - Lepsze wsparcie audio_session
-//
-//  Każdy dźwięk ma własny player → równoległe odtwarzanie bez konfliktów.
-//  Dźwięki muszą być krótkie (<0.5s) i wstępnie załadowane.
 // ═══════════════════════════════════════════════════════════════════════════
 
 class AudioFeedback {
@@ -573,7 +560,6 @@ class AudioFeedback {
       _pUndo = AudioPlayer();
       _pEnd = AudioPlayer();
 
-      // Wstępne ładowanie do bufora dekodera – play() będzie błyskawiczny
       await Future.wait([
         _pMake.setAudioSource(AudioSource.asset('assets/sounds/hit.mp3')),
         _pSwish.setAudioSource(AudioSource.asset('assets/sounds/swish.mp3')),
@@ -593,7 +579,7 @@ class AudioFeedback {
   Future<void> _play(AudioPlayer p) async {
     if (!_ready) return;
     try {
-      await p.seek(Duration.zero); // przewiń do początku jeśli grał
+      await p.seek(Duration.zero);
       await p.play();
     } catch (e) {
       debugPrint('[AudioFeedback] Play error: $e');
@@ -622,7 +608,7 @@ class BackgroundAsrService {
 
   static Future<void> startSession() async {
     await _svc.startService();
-    // Daj usłudze chwilę na inicjalizację modeli
+    // Czas na inicjalizację modeli (~1-2s przy pierwszym uruchomieniu)
     await Future.delayed(const Duration(milliseconds: 800));
     _svc.invoke(AsrCommands.startListening);
   }
@@ -635,8 +621,6 @@ class BackgroundAsrService {
     _svc.invoke(AsrCommands.shutdown);
   }
 
-  /// Strumień zdarzeń z tła → UI.
-  /// Każde zdarzenie: Map<String, dynamic> z kluczem 'event'.
   static Stream<Map<String, dynamic>?> events(String eventName) {
     return _svc.on(eventName);
   }

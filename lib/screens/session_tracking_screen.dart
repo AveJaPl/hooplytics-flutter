@@ -9,6 +9,12 @@
 //  - Wyświetla liczniki, animacje, trend
 //  - Obsługuje przyciski dotykowe jako alternatywę dla głosu
 //  - ZERO logiki audio i ASR tutaj
+//
+//  NOWE vs poprzednia wersja:
+//  - Subskrypcja AsrEvents.status → debug panel w UI
+//  - _serviceReady ustawiany ze statusu serwisu (nie z try/catch toggleVoice)
+//  - Długie przytrzymanie przycisku Voice → toggle debug panelu
+//  - Panel debug jest automatycznie widoczny gdy serwis rzuci błąd
 // ═══════════════════════════════════════════════════════════════════════════
 
 import 'dart:async';
@@ -61,7 +67,14 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
   // ── Stan Voice ──────────────────────────────────────────────────────────
   bool _voiceOn = false; // usługa tła jest aktywna
   bool _voiceActive = false; // VAD właśnie wykrywa mowę (dot-pulse)
-  bool _serviceReady = false; // modele załadowane
+  bool _serviceReady = false; // modele załadowane, nasłuchiwanie aktywne
+
+  // ── Debug panel ─────────────────────────────────────────────────────────
+  //  Logi z usługi tła – widoczne na urządzeniu bez kabla debugera.
+  //  Toggle: długie przytrzymanie przycisku Voice.
+  //  Auto-pokaż: przy błędzie serwisu.
+  final List<String> _debugLog = [];
+  bool _showDebug = false;
 
   // ── Subskrypcje zdarzeń z usługi tła ────────────────────────────────────
   final List<StreamSubscription> _subs = [];
@@ -130,11 +143,7 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
 
   @override
   void dispose() {
-    // Zatrzymaj subskrypcje, ale NIE zatrzymuj usługi tła –
-    // usługa żyje niezależnie od UI (ekran może być wygaszony)
-    for (final s in _subs) {
-      s.cancel();
-    }
+    for (final s in _subs) s.cancel();
     _ticker?.cancel();
     _sw.stop();
     _flashCtrl.dispose();
@@ -148,9 +157,6 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
 
   // ═══════════════════════════════════════════════════════════════════════
   //  SUBSKRYPCJE ZDARZEŃ Z TŁA
-  //
-  //  Każde zdarzenie przychodzi jako Map<String,dynamic>?
-  //  Wywołanie setState() tutaj jest bezpieczne – jesteśmy na głównym izolacje.
   // ═══════════════════════════════════════════════════════════════════════
 
   void _subscribeToService() {
@@ -203,12 +209,36 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
       }),
     );
 
+    // ── Status z serwisu → debug log + _serviceReady ───────────────────────
+    //
+    //  Każdy krok inicjalizacji serwisu wysyła AsrEvents.status.
+    //  Gdy przyjdzie 'Nasłuchuję ✓' → ustawiamy _serviceReady = true
+    //  co przełącza UI z "Ładuję…" na "Słucham…"
+    //
+    _subs.add(
+      BackgroundAsrService.events(AsrEvents.status).listen((data) {
+        if (!mounted) return;
+        final msg = data?['msg'] as String? ?? '';
+        setState(() {
+          _debugLog.add(msg);
+          if (_debugLog.length > 15) _debugLog.removeAt(0);
+          if (msg.contains('Nasłuchuję') || msg.contains('Gotowy')) {
+            _serviceReady = true;
+          }
+        });
+      }),
+    );
+
     // ── Błędy z serwisu ────────────────────────────────────────────────────
     _subs.add(
       BackgroundAsrService.events(AsrEvents.error).listen((data) {
         if (!mounted) return;
         final msg = data?['message'] as String? ?? 'Unknown error';
         debugPrint('[UI] Błąd serwisu: $msg');
+        setState(() {
+          _debugLog.add('❌ $msg');
+          _showDebug = true; // automatycznie pokaż panel przy błędzie
+        });
         _flash('ERROR', AppColors.red);
       }),
     );
@@ -222,16 +252,17 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
     HapticFeedback.selectionClick();
 
     if (!_voiceOn) {
-      // ── Włącz: uruchom usługę tła ────────────────────────────────────
       setState(() {
         _voiceOn = true;
         _serviceReady = false;
+        _debugLog.clear();
       });
       _flash('VOICE ON', AppColors.gold);
 
       try {
         await BackgroundAsrService.startSession();
-        if (mounted) setState(() => _serviceReady = true);
+        // _serviceReady jest ustawiany asynchronicznie przez AsrEvents.status
+        // gdy serwis wyśle 'Nasłuchuję ✓'
       } catch (e) {
         if (mounted) {
           setState(() {
@@ -242,13 +273,12 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
         }
       }
     } else {
-      // ── Wyłącz: zatrzymaj nasłuchiwanie, ale NIE zabijaj usługi ─────
-      // (usługa zostanie zamknięta w _finish() lub przy dispose okna)
       await BackgroundAsrService.stopListening();
       if (mounted) {
         setState(() {
           _voiceOn = false;
           _voiceActive = false;
+          _serviceReady = false;
         });
         _flash('VOICE OFF', AppColors.gold);
       }
@@ -259,7 +289,6 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
   //  LOGIKA RZUTÓW
   // ═══════════════════════════════════════════════════════════════════════
 
-  /// Wspólna logika dla make/swish – wywoływana z UI lub zdarzenia serwisu.
   void _applyMake({required bool swish}) {
     HapticFeedback.mediumImpact();
     setState(() {
@@ -271,9 +300,7 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
       _log.add(swish ? ShotResult.swish : ShotResult.make);
     });
     _flash(
-      swish ? '+ SWISH' : '+ MADE',
-      swish ? AppColors.gold : AppColors.green,
-    );
+        swish ? '+ SWISH' : '+ MADE', swish ? AppColors.gold : AppColors.green);
     (swish ? _swishPressCtrl : _makePressCtrl).forward(from: 0);
   }
 
@@ -329,15 +356,13 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
   // ═══════════════════════════════════════════════════════════════════════
 
   void _finish() {
-    // Zatrzymaj timery UI
     _ticker?.cancel();
     _sw.stop();
-
-    // Zamknij usługę tła
     BackgroundAsrService.shutdown();
     setState(() {
       _voiceOn = false;
       _voiceActive = false;
+      _serviceReady = false;
     });
 
     showModalBottomSheet(
@@ -391,6 +416,8 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
                   const Spacer(flex: 2),
                   _trend(),
                   const Spacer(flex: 3),
+                  // Debug panel – widoczny gdy _showDebug == true
+                  if (_showDebug) _debugPanel(),
                   _trackBtns(),
                   const SizedBox(height: 14),
                   _utilBar(),
@@ -428,7 +455,6 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
               ],
             ),
           ),
-          // Timer chip
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
             decoration: BoxDecoration(
@@ -486,7 +512,7 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
         ),
       );
 
-  // ── Gauge (ring) ──────────────────────────────────────────────────────────
+  // ── Gauge ─────────────────────────────────────────────────────────────────
 
   Widget _gauge() => SizedBox(
         width: 210,
@@ -542,7 +568,7 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
         ],
       );
 
-  // ── Trend chart ───────────────────────────────────────────────────────────
+  // ── Trend ─────────────────────────────────────────────────────────────────
 
   Widget _trend() => Container(
         padding: const EdgeInsets.all(18),
@@ -550,52 +576,99 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
             color: AppColors.surface,
             border: Border.all(color: AppColors.border),
             borderRadius: BorderRadius.circular(20)),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-              Text('ACCURACY TREND',
-                  style: AppText.ui(10,
-                      color: AppColors.text3,
-                      letterSpacing: 1.5,
-                      weight: FontWeight.w700)),
-              Text('Recent', style: AppText.ui(10, color: AppColors.text3)),
-            ]),
-            const SizedBox(height: 18),
-            SizedBox(
-              height: 50,
-              width: double.infinity,
-              child: _log.isEmpty
-                  ? Center(
-                      child: Text('Awaiting first shot…',
-                          style: AppText.ui(13, color: AppColors.text3)))
-                  : CustomPaint(painter: _TrendPainter(_log, _ringColor)),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+            Text('ACCURACY TREND',
+                style: AppText.ui(10,
+                    color: AppColors.text3,
+                    letterSpacing: 1.5,
+                    weight: FontWeight.w700)),
+            Text('Recent', style: AppText.ui(10, color: AppColors.text3)),
+          ]),
+          const SizedBox(height: 18),
+          SizedBox(
+            height: 50,
+            width: double.infinity,
+            child: _log.isEmpty
+                ? Center(
+                    child: Text('Awaiting first shot…',
+                        style: AppText.ui(13, color: AppColors.text3)))
+                : CustomPaint(painter: _TrendPainter(_log, _ringColor)),
+          ),
+          if (_log.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children:
+                  (_log.length > 20 ? _log.sublist(_log.length - 20) : _log)
+                      .map((r) => Container(
+                          width: 8,
+                          height: 8,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: r == ShotResult.swish
+                                ? AppColors.gold
+                                : r == ShotResult.make
+                                    ? AppColors.green
+                                    : AppColors.red.withValues(alpha: 0.55),
+                          )))
+                      .toList(),
             ),
-            if (_log.isNotEmpty) ...[
-              const SizedBox(height: 12),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children:
-                    (_log.length > 20 ? _log.sublist(_log.length - 20) : _log)
-                        .map((r) => Container(
-                            width: 8,
-                            height: 8,
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              color: r == ShotResult.swish
-                                  ? AppColors.gold
-                                  : r == ShotResult.make
-                                      ? AppColors.green
-                                      : AppColors.red.withValues(alpha: 0.55),
-                            )))
-                        .toList(),
-              ),
-            ],
           ],
-        ),
+        ]),
       );
 
-  // ── Track buttons (dotykowe) ──────────────────────────────────────────────
+  // ── Debug Panel ───────────────────────────────────────────────────────────
+  //
+  //  Pokazuje logi z usługi tła bez potrzeby kabla USB / narzędzi devtools.
+  //  - Auto-pokaż przy błędzie serwisu
+  //  - Toggle: długie przytrzymanie przycisku Voice
+  //  Kolory: czerwony = błąd, zielony = OK/✓, złoty = keyword, szary = info
+
+  Widget _debugPanel() => Container(
+        margin: const EdgeInsets.only(bottom: 8),
+        padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(
+          color: const Color(0xFF080810),
+          border: Border.all(color: const Color(0xFF2A2A3A)),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+            const Text('DEBUG LOG',
+                style: TextStyle(
+                    color: Color(0xFF444466),
+                    fontSize: 9,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 1.5)),
+            GestureDetector(
+              onTap: () => setState(() => _showDebug = false),
+              child:
+                  const Icon(Icons.close, size: 14, color: Color(0xFF444466)),
+            ),
+          ]),
+          const SizedBox(height: 6),
+          ..._debugLog.reversed.take(10).map((msg) => Padding(
+                padding: const EdgeInsets.only(bottom: 2),
+                child: Text(
+                  msg,
+                  style: TextStyle(
+                    color: msg.contains('❌') || msg.contains('BŁĄD')
+                        ? const Color(0xFFFF5252)
+                        : msg.contains('✓') || msg.contains('OK')
+                            ? const Color(0xFF3DD68C)
+                            : msg.startsWith('🎤')
+                                ? const Color(0xFFD4A843)
+                                : const Color(0xFF555570),
+                    fontSize: 10,
+                    fontFamily: 'monospace',
+                  ),
+                ),
+              )),
+        ]),
+      );
+
+  // ── Track buttons ─────────────────────────────────────────────────────────
 
   Widget _trackBtns() => Row(children: [
         Expanded(
@@ -652,7 +725,7 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
         ),
       ]);
 
-  // ── Util bar (Undo / Voice / Tips) ────────────────────────────────────────
+  // ── Util bar ──────────────────────────────────────────────────────────────
 
   Widget _utilBar() => Row(children: [
         _UtilBtn(
@@ -678,12 +751,17 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
   //
   //  Stany:
   //  • !_voiceOn              → szary,  "Voice Mode"
-  //  • _voiceOn && !_ready   → złoty,  "Ładuję…"  (modele się ładują)
+  //  • _voiceOn && !_ready   → złoty,  "Ładuję…"  + spinner
   //  • _voiceOn && _ready    → złoty,  "Słucham…" + pulsujący dot
-  //  Tekst NIE zmienia się podczas restartu VAD → zero migotania
+  //
+  //  Długie przytrzymanie → toggle panelu debug
 
   Widget _voiceButton() => GestureDetector(
         onTap: _toggleVoice,
+        onLongPress: () {
+          HapticFeedback.mediumImpact();
+          setState(() => _showDebug = !_showDebug);
+        },
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 200),
           height: 48,
@@ -698,7 +776,6 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
             borderRadius: BorderRadius.circular(12),
           ),
           child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-            // Pulsujący dot – tylko gdy VAD aktywnie wykrywa mowę
             if (_voiceOn && _serviceReady)
               AnimatedBuilder(
                 animation: _pulsCtrl,
@@ -717,7 +794,6 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
                   ),
                 ),
               ),
-            // Spinner gdy modele się ładują
             if (_voiceOn && !_serviceReady) ...[
               const SizedBox(
                   width: 14,
@@ -1242,11 +1318,11 @@ class _VoiceTipsSheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     const tips = [
-      ('"punkt" / "traf" / "wpadł"', 'Trafienie', AppColors.green),
-      ('"czysto" / "swish"', 'Swish', AppColors.gold),
-      ('"pudło" / "miss" / "chybił"', 'Pudło', AppColors.red),
-      ('"cofnij" / "undo" / "anuluj"', 'Cofnij', AppColors.blue),
-      ('"koniec" / "stop" / "finish"', 'Koniec sesji', AppColors.text2),
+      ('"MAKE"', 'Trafienie', AppColors.green),
+      ('"SWISH"', 'Swish', AppColors.gold),
+      ('"MISS"', 'Pudło', AppColors.red),
+      ('"UNDO"', 'Cofnij', AppColors.blue),
+      ('"DONE"', 'Koniec sesji', AppColors.text2),
     ];
 
     return Container(
@@ -1303,7 +1379,23 @@ class _VoiceTipsSheet extends StatelessWidget {
               const SizedBox(width: 8),
               Expanded(
                   child: Text(
-                      'Rozpoznawanie mowy działa offline – zero chmury, zero opóźnień sieciowych',
+                      'Komendy po angielsku – model GigaSpeech działa offline, zero chmury',
+                      style: AppText.ui(12, color: AppColors.text3))),
+            ]),
+          ),
+          const SizedBox(height: 8),
+          Container(
+            padding: const EdgeInsets.all(11),
+            decoration: BoxDecoration(
+                color: AppColors.surfaceHi,
+                borderRadius: BorderRadius.circular(8)),
+            child: Row(children: [
+              const Icon(Icons.touch_app_rounded,
+                  size: 15, color: AppColors.text3),
+              const SizedBox(width: 8),
+              Expanded(
+                  child: Text(
+                      'Przytrzymaj przycisk Voice aby zobaczyć log diagnostyczny',
                       style: AppText.ui(12, color: AppColors.text3))),
             ]),
           ),
