@@ -20,7 +20,7 @@ dependencies:
   flutter_background_service: ^5.1.0
   just_audio: ^0.9.40
   audio_session: ^0.1.21
-  record: ^5.1.2
+  record: ^6.2.0
   permission_handler: ^11.3.1
 
 dev_dependencies:
