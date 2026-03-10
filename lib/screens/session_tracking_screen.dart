@@ -238,6 +238,8 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
         setState(() {
           _debugLog.add('❌ $msg');
           _showDebug = true; // automatycznie pokaż panel przy błędzie
+          _voiceOn = false; // wyłączamy przy krytycznym błędzie
+          _serviceReady = false;
         });
         _flash('ERROR', AppColors.red);
       }),

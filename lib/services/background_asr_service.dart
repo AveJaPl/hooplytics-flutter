@@ -131,6 +131,9 @@ void _onServiceStart(ServiceInstance service) async {
   WidgetsFlutterBinding.ensureInitialized();
   DartPluginRegistrant.ensureInitialized();
 
+  // ── 0. Inicjalizacja biblioteki natywnej (WYMAGANE) ──────────────────────
+  sherpa.initBindings();
+
   _status(service, 'Usługa uruchomiona');
 
   // ── 1. Konfiguracja sesji audio (PRZED wszystkim innym) ──────────────────
@@ -169,7 +172,7 @@ void _onServiceStart(ServiceInstance service) async {
     final dir = await getApplicationSupportDirectory();
     keywordsPath = '${dir.path}/kws_keywords.txt';
     await File(keywordsPath).writeAsString(
-      'MAKE @1.5\nSWISH @1.5\nMISS @1.5\nUNDO @1.5\nDONE @1.5\n',
+      'make @1.5\nswish @1.5\nmiss @1.5\nundo @1.5\ndone @1.5\n',
     );
     _status(service, 'Keywords OK');
   } catch (e) {
@@ -209,8 +212,9 @@ void _onServiceStart(ServiceInstance service) async {
 
   // ── 6. Przekazanie callbacków wyniku ASR ──────────────────────────────
   asrEngine.onKeyword = (String keyword) async {
-    _status(service, '🎤 "$keyword"');
-    switch (keyword) {
+    final k = keyword.trim().toLowerCase();
+    _status(service, '🎤 "$k"');
+    switch (k) {
       case 'make':
         await feedback.playMake();
         service.invoke(AsrEvents.shotMake, {});
