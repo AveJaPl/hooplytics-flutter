@@ -1,22 +1,4 @@
 // lib/services/background_asr_service.dart
-//
-// UPROSZCZONA ARCHITEKTURA – bez flutter_background_service
-// ═══════════════════════════════════════════════════════════════════════════
-//
-//  Poprzednia architektura (flutter_background_service + sherpa_onnx w tle)
-//  crashowała na iOS bo dart:ffi nie może ładować natywnych bibliotek
-//  w izolacje tła na iOS (ograniczenie sandboxu).
-//
-//  Nowa architektura: ASR działa w GŁÓWNYM izolacje, ekran jest utrzymywany
-//  włączony przez WakelockPlus. Dla aplikacji do śledzenia rzutów to
-//  właściwe podejście – użytkownik trzyma telefon i aktywnie używa apki.
-//
-//  Przepływ:
-//  SessionTrackingScreen
-//    → BackgroundAsrService.startSession()
-//    → AsrEngine.start() (w głównym izolacje, ten sam wątek co UI)
-//    → callback onKeyword → setState() w UI
-// ═══════════════════════════════════════════════════════════════════════════
 
 import 'dart:async';
 import 'dart:io';
@@ -32,8 +14,6 @@ import 'package:wakelock_plus/wakelock_plus.dart';
 
 import 'model_extractor.dart';
 
-// ─── Stałe – zachowane dla kompatybilności z session_tracking_screen ───────
-
 class AsrEvents {
   static const shotMake = 'shot_make';
   static const shotSwish = 'shot_swish';
@@ -45,26 +25,16 @@ class AsrEvents {
   static const error = 'error';
 }
 
-// ─── Inicjalizacja – wywoływana z main(), inicjalizuje sherpa bindings ──────
-//
-//  sherpa.initBindings() MUSI być wywołane w głównym izolacje przed użyciem
-//  jakichkolwiek klas sherpa_onnx. Wywoływane w main.dart.
-
 Future<void> initBackgroundService() async {
-  // Inicjalizacja bindings jest teraz w main.dart: sherpa.initBindings()
-  // Tu nie robimy nic – funkcja zachowana dla kompatybilności
-  debugPrint('[ASR] initBackgroundService: no-op (running in main isolate)');
+  debugPrint('[ASR] initBackgroundService: no-op');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-//  FASADA UI – BackgroundAsrService
-//  Interfejs taki sam jak poprzednio, ale bez IPC – callbacki bezpośrednie
+//  FASADA UI
 // ═══════════════════════════════════════════════════════════════════════════
 
 class BackgroundAsrService {
   static final _instance = _AsrServiceImpl();
-
-  // Strumienie zdarzeń – zamiast IPC używamy StreamController
   static final _controllers =
       <String, StreamController<Map<String, dynamic>?>>{};
 
@@ -87,18 +57,14 @@ class BackgroundAsrService {
 
   static Future<void> shutdown() async {
     await _instance.shutdown();
-    // Zamknij kontrolery
-    for (final c in _controllers.values) {
-      await c.close();
-    }
-    _controllers.clear();
+    // NIE zamykamy kontrolerów – zostają aktywne dla kolejnego startSession
   }
 
   static Future<bool> get isRunning async => _instance.isRunning;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-//  IMPLEMENTACJA SERWISU – główny izolat
+//  IMPLEMENTACJA
 // ═══════════════════════════════════════════════════════════════════════════
 
 class _AsrServiceImpl {
@@ -124,15 +90,13 @@ class _AsrServiceImpl {
 
     _status('Inicjalizacja...');
 
-    // ── Wakelock – ekran nie zgaśnie podczas sesji ─────────────────────
     try {
       await WakelockPlus.enable();
       _status('Wakelock OK');
     } catch (e) {
-      _status('Wakelock error: $e (kontynuuję)');
+      _status('Wakelock error: $e');
     }
 
-    // ── Audio session ──────────────────────────────────────────────────
     _audioRouter = AudioRouter();
     try {
       await _audioRouter!.configure();
@@ -141,7 +105,6 @@ class _AsrServiceImpl {
       _status('Audio session BŁĄD: $e');
     }
 
-    // ── Kopiuj modele ──────────────────────────────────────────────────
     _status('Kopiuję modele...');
     Map<String, String> modelPaths;
     try {
@@ -153,7 +116,6 @@ class _AsrServiceImpl {
       return;
     }
 
-    // ── Keywords file ──────────────────────────────────────────────────
     String keywordsPath;
     try {
       final dir = await getApplicationSupportDirectory();
@@ -168,7 +130,6 @@ class _AsrServiceImpl {
       return;
     }
 
-    // ── ASR Engine ──────────────────────────────────────────────────────
     _asrEngine = AsrEngine(
       vadModelPath: modelPaths['silero_vad.onnx']!,
       encoderPath: modelPaths['kws_encoder.onnx']!,
@@ -187,7 +148,6 @@ class _AsrServiceImpl {
       return;
     }
 
-    // ── Audio feedback ─────────────────────────────────────────────────
     _feedback = AudioFeedback();
     try {
       await _feedback!.init();
@@ -196,7 +156,6 @@ class _AsrServiceImpl {
       _status('Dźwięki BŁĄD: $e (kontynuuję)');
     }
 
-    // ── Callbacki ──────────────────────────────────────────────────────
     _asrEngine!.onKeyword = (String keyword) async {
       _status('🎤 "$keyword"');
       switch (keyword) {
@@ -227,7 +186,10 @@ class _AsrServiceImpl {
       onEvent(AsrEvents.voiceState, {'active': active});
     };
 
-    // ── Start nagrywania ───────────────────────────────────────────────
+    _asrEngine!.onError = (String msg) {
+      _status('❌ $msg');
+    };
+
     try {
       await _audioRouter!.activateForRecording();
       await _asrEngine!.start();
@@ -271,7 +233,6 @@ class AudioRouter {
 
   Future<void> configure() async {
     _session = await AudioSession.instance;
-
     if (Platform.isIOS) {
       await _session!.configure(AudioSessionConfiguration(
         avAudioSessionCategory: AVAudioSessionCategory.playAndRecord,
@@ -348,6 +309,11 @@ class AudioRouter {
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  ASR ENGINE
+//
+//  KLUCZOWA ZMIANA: _enqueueChunk zamiast _processChunk w stream.listen().
+//  Każdy chunk jest przetwarzany w osobnym Future – nie blokuje głównego
+//  wątku. Jeśli poprzedni chunk jeszcze trwa → nowy jest pomijany.
+//  Zapobiega to watchdog kill przez iOS.
 // ═══════════════════════════════════════════════════════════════════════════
 
 class AsrEngine {
@@ -368,9 +334,11 @@ class AsrEngine {
 
   bool _running = false;
   bool _vadActive = false;
+  bool _processing = false;
 
   void Function(String keyword)? onKeyword;
   void Function(bool active)? onVadStateChange;
+  void Function(String msg)? onError;
 
   AsrEngine({
     required this.vadModelPath,
@@ -382,7 +350,7 @@ class AsrEngine {
   });
 
   Future<void> init() async {
-    debugPrint('[AsrEngine] Init VAD...');
+    debugPrint('[AsrEngine] Init VAD: $vadModelPath');
 
     final vadConfig = sherpa.VadModelConfig(
       sileroVad: sherpa.SileroVadModelConfig(
@@ -417,6 +385,7 @@ class AsrEngine {
       ),
       keywordsFile: keywordsFilePath,
     );
+
     debugPrint('[AsrEngine] Tworzę KeywordSpotter...');
     _spotter = sherpa.KeywordSpotter(spotterConfig);
     debugPrint('[AsrEngine] KeywordSpotter OK');
@@ -425,6 +394,7 @@ class AsrEngine {
   Future<void> start() async {
     if (_running) return;
     _running = true;
+    _processing = false;
 
     _recorder = AudioRecorder();
     final stream = await _recorder!.startStream(
@@ -440,36 +410,33 @@ class AsrEngine {
     );
 
     _audioSub = stream.listen(
-      _processChunk,
+      _enqueueChunk,
       onError: (e) => debugPrint('[AsrEngine] Stream error: $e'),
     );
   }
 
-  Future<void> stop() async {
-    if (!_running) return;
-    _running = false;
-    await _audioSub?.cancel();
-    _audioSub = null;
-    await _recorder?.stop();
-    _recorder?.dispose();
-    _recorder = null;
-    if (_vadActive) {
-      _vadActive = false;
-      onVadStateChange?.call(false);
-    }
-  }
+  // Odbiera chunk i zleca przetwarzanie asynchronicznie.
+  // Jeśli poprzedni chunk jeszcze trwa → pomija (nie blokuje main thread).
+  void _enqueueChunk(Uint8List bytes) {
+    if (_processing) return;
+    if (_vad == null || _spotter == null) return;
 
-  Future<void> dispose() async {
-    await stop();
-    _vad?.free();
-    _spotter?.free();
-    _vad = null;
-    _spotter = null;
+    _processing = true;
+    Future(() {
+      try {
+        _processChunk(bytes);
+      } catch (e) {
+        debugPrint('[AsrEngine] chunk error: $e');
+        onError?.call(e.toString());
+      } finally {
+        _processing = false;
+      }
+    });
   }
 
   void _processChunk(Uint8List bytes) {
-    if (_vad == null) return;
-    if (_spotter == null) return;
+    if (_vad == null || _spotter == null) return;
+
     final samples = _int16ToFloat32(bytes);
     _vad!.acceptWaveform(samples);
 
@@ -497,6 +464,29 @@ class AsrEngine {
       _vadActive = speechNow;
       onVadStateChange?.call(_vadActive);
     }
+  }
+
+  Future<void> stop() async {
+    if (!_running) return;
+    _running = false;
+    _processing = false;
+    await _audioSub?.cancel();
+    _audioSub = null;
+    await _recorder?.stop();
+    _recorder?.dispose();
+    _recorder = null;
+    if (_vadActive) {
+      _vadActive = false;
+      onVadStateChange?.call(false);
+    }
+  }
+
+  Future<void> dispose() async {
+    await stop();
+    _vad?.free();
+    _spotter?.free();
+    _vad = null;
+    _spotter = null;
   }
 
   static Float32List _int16ToFloat32(Uint8List bytes) {
