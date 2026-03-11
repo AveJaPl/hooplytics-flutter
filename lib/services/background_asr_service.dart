@@ -385,20 +385,6 @@ class AsrEngine {
   //   debugPrint('[AsrEngine] VAD: $vadModelPath');
   //   debugPrint('[AsrEngine] Encoder: $encoderPath');
 
-  //   final vadConfig = sherpa.VadModelConfig(
-  //     sileroVad: sherpa.SileroVadModelConfig(
-  //       model: vadModelPath,
-  //       threshold: 0.45,
-  //       minSilenceDuration: 0.30,
-  //       minSpeechDuration: 0.20,
-  //       windowSize: _kChunkSamples,
-  //       maxSpeechDuration: 8.0,
-  //     ),
-  //     sampleRate: _kSampleRate,
-  //     numThreads: 1,
-  //     debug: false,
-  //   );
-
   //   _vad = sherpa.VoiceActivityDetector(
   //     config: vadConfig,
   //     bufferSizeInSeconds: 30,
@@ -423,9 +409,25 @@ class AsrEngine {
   // }
 
   Future<void> init() async {
-    debugPrint('[AsrEngine] TEST init – bez sherpa');
-
-    debugPrint('[AsrEngine] TEST init OK');
+    debugPrint('[AsrEngine] Init VAD');
+    final vadConfig = sherpa.VadModelConfig(
+      sileroVad: sherpa.SileroVadModelConfig(
+        model: vadModelPath,
+        threshold: 0.45,
+        minSilenceDuration: 0.30,
+        minSpeechDuration: 0.20,
+        windowSize: _kChunkSamples,
+        maxSpeechDuration: 8.0,
+      ),
+      sampleRate: _kSampleRate,
+      numThreads: 1,
+      debug: false,
+    );
+    _vad = sherpa.VoiceActivityDetector(
+      config: vadConfig,
+      bufferSizeInSeconds: 30,
+    );
+    debugPrint('[AsrEngine] Init VAD OK');
   }
 
   Future<void> start() async {
@@ -474,8 +476,8 @@ class AsrEngine {
   }
 
   void _processChunk(Uint8List bytes) {
-    return;
-    if (_vad == null || _spotter == null) return;
+    if (_vad == null) return;
+    if (_spotter == null) return;
     final samples = _int16ToFloat32(bytes);
     _vad!.acceptWaveform(samples);
 
