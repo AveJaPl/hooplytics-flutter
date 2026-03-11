@@ -143,7 +143,9 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
 
   @override
   void dispose() {
-    for (final s in _subs) s.cancel();
+    for (final s in _subs) {
+      s.cancel();
+    }
     _ticker?.cancel();
     _sw.stop();
     _flashCtrl.dispose();
@@ -238,8 +240,9 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
         setState(() {
           _debugLog.add('❌ $msg');
           _showDebug = true; // automatycznie pokaż panel przy błędzie
-          _voiceOn = false; // wyłączamy przy krytycznym błędzie
+          _voiceOn = false;
           _serviceReady = false;
+          _voiceActive = false;
         });
         _flash('ERROR', AppColors.red);
       }),

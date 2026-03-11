@@ -1,61 +1,38 @@
 // lib/services/background_asr_service.dart
 //
-// ═══════════════════════════════════════════════════════════════════════════
-//  ARCHITEKTURA USŁUGI W TLE
+// UPROSZCZONA ARCHITEKTURA – bez flutter_background_service
 // ═══════════════════════════════════════════════════════════════════════════
 //
-//  ┌─────────────────────────────────────────────────────────────────────┐
-//  │  Foreground Isolate (UI)                                            │
-//  │  SessionTrackingScreen ──listen──▶ FlutterBackgroundService.invoke  │
-//  └──────────────────────────────────────┬──────────────────────────────┘
-//                                         │ IPC (JSON events)
-//  ┌──────────────────────────────────────▼──────────────────────────────┐
-//  │  Background Isolate (Foreground Service)                            │
-//  │                                                                     │
-//  │  ModelExtractor ──copy assets──▶ absolutne ścieżki na dysku        │
-//  │       │                                                             │
-//  │  AudioRouter ──configure──▶ audio_session (iOS/Android BT)         │
-//  │       │                                                             │
-//  │  AudioRecorder (record pkg) ──PCM 16 kHz──▶ RingBuffer             │
-//  │                                                    │                │
-//  │                                              SileroVAD              │
-//  │                                             (sherpa_onnx)           │
-//  │                                                    │ speech detected │
-//  │                                            KeywordSpotter           │
-//  │                                           (sherpa_onnx, offline)   │
-//  │                                                    │ keyword hit     │
-//  │                                            AudioFeedback            │
-//  │                                             (just_audio)            │
-//  │                                                    │                │
-//  │                                          service.invoke(event)      │
-//  └─────────────────────────────────────────────────────────────────────┘
+//  Poprzednia architektura (flutter_background_service + sherpa_onnx w tle)
+//  crashowała na iOS bo dart:ffi nie może ładować natywnych bibliotek
+//  w izolacje tła na iOS (ograniczenie sandboxu).
 //
-//  KLUCZOWA ZMIANA vs poprzednia wersja:
-//  - sherpa_onnx wymaga ABSOLUTNYCH ścieżek plików na dysku.
-//    Ścieżki 'assets/models/...' NIE działają – assets są spakowane
-//    w binarce aplikacji, nie istnieją jako pliki systemu plików.
-//  - ModelExtractor (lib/services/model_extractor.dart) kopiuje modele
-//    z asset bundle do getApplicationSupportDirectory() przy pierwszym
-//    uruchomieniu, potem używa cache.
+//  Nowa architektura: ASR działa w GŁÓWNYM izolacje, ekran jest utrzymywany
+//  włączony przez WakelockPlus. Dla aplikacji do śledzenia rzutów to
+//  właściwe podejście – użytkownik trzyma telefon i aktywnie używa apki.
+//
+//  Przepływ:
+//  SessionTrackingScreen
+//    → BackgroundAsrService.startSession()
+//    → AsrEngine.start() (w głównym izolacje, ten sam wątek co UI)
+//    → callback onKeyword → setState() w UI
 // ═══════════════════════════════════════════════════════════════════════════
 
 import 'dart:async';
 import 'dart:io';
-import 'dart:ui';
 
 import 'package:audio_session/audio_session.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter/widgets.dart';
-import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
 import 'package:sherpa_onnx/sherpa_onnx.dart' as sherpa;
+import 'package:wakelock_plus/wakelock_plus.dart';
 
 import 'model_extractor.dart';
 
-// ─── Stałe zdarzeń IPC (tło → UI) ─────────────────────────────────────────
+// ─── Stałe – zachowane dla kompatybilności z session_tracking_screen ───────
 
 class AsrEvents {
   static const shotMake = 'shot_make';
@@ -63,219 +40,230 @@ class AsrEvents {
   static const shotMiss = 'shot_miss';
   static const shotUndo = 'shot_undo';
   static const finish = 'finish';
-  static const voiceState = 'voice_state'; // {active: bool}
-  static const status = 'status'; // {msg: String} – debug panel w UI
-  static const error = 'error'; // {message: String}
+  static const voiceState = 'voice_state';
+  static const status = 'status';
+  static const error = 'error';
 }
 
-// ─── Stałe poleceń IPC (UI → tło) ──────────────────────────────────────────
-
-class AsrCommands {
-  static const startListening = 'start_listening';
-  static const stopListening = 'stop_listening';
-  static const shutdown = 'shutdown';
-}
-
-// ─── Helper statusu – wysyła do UI i drukuje w konsoli ─────────────────────
-
-void _status(ServiceInstance svc, String msg) {
-  debugPrint('[BG] $msg');
-  svc.invoke(AsrEvents.status, {'msg': msg});
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-//  INICJALIZACJA USŁUGI – wywołaj w main() przed runApp()
-// ═══════════════════════════════════════════════════════════════════════════
+// ─── Inicjalizacja – wywoływana z main(), inicjalizuje sherpa bindings ──────
+//
+//  sherpa.initBindings() MUSI być wywołane w głównym izolacje przed użyciem
+//  jakichkolwiek klas sherpa_onnx. Wywoływane w main.dart.
 
 Future<void> initBackgroundService() async {
-  final service = FlutterBackgroundService();
-
-  await service.configure(
-    // ── Android: foreground service z trwałym powiadomieniem ──────────────
-    androidConfiguration: AndroidConfiguration(
-      onStart: _onServiceStart,
-      isForegroundMode: true,
-      autoStart: false,
-      autoStartOnBoot: false,
-      notificationChannelId: 'bball_tracking',
-      initialNotificationTitle: 'Basketball Tracker',
-      initialNotificationContent: 'Nasłuchuję komend...',
-      foregroundServiceNotificationId: 888,
-      foregroundServiceTypes: const [
-        AndroidForegroundType.microphone,
-      ],
-    ),
-
-    // ── iOS: background processing ─────────────────────────────────────────
-    iosConfiguration: IosConfiguration(
-      onForeground: _onServiceStart,
-      onBackground: _onIosBackground,
-      autoStart: false,
-    ),
-  );
-}
-
-@pragma('vm:entry-point')
-Future<bool> _onIosBackground(ServiceInstance service) async {
-  WidgetsFlutterBinding.ensureInitialized();
-  DartPluginRegistrant.ensureInitialized();
-  return true;
+  // Inicjalizacja bindings jest teraz w main.dart: sherpa.initBindings()
+  // Tu nie robimy nic – funkcja zachowana dla kompatybilności
+  debugPrint('[ASR] initBackgroundService: no-op (running in main isolate)');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-//  PUNKT WEJŚCIA USŁUGI – uruchamia się w izolacje tła
+//  FASADA UI – BackgroundAsrService
+//  Interfejs taki sam jak poprzednio, ale bez IPC – callbacki bezpośrednie
 // ═══════════════════════════════════════════════════════════════════════════
 
-@pragma('vm:entry-point')
-void _onServiceStart(ServiceInstance service) async {
-  WidgetsFlutterBinding.ensureInitialized();
-  DartPluginRegistrant.ensureInitialized();
+class BackgroundAsrService {
+  static final _instance = _AsrServiceImpl();
 
-  // ── 0. Inicjalizacja biblioteki natywnej (WYMAGANE) ──────────────────────
-  sherpa.initBindings();
+  // Strumienie zdarzeń – zamiast IPC używamy StreamController
+  static final _controllers =
+      <String, StreamController<Map<String, dynamic>?>>{};
 
-  _status(service, 'Usługa uruchomiona');
-
-  // ── 1. Konfiguracja sesji audio (PRZED wszystkim innym) ──────────────────
-  final audioRouter = AudioRouter();
-  try {
-    await audioRouter.configure();
-    _status(service, 'Audio session OK');
-  } catch (e) {
-    _status(service, 'Audio session BŁĄD: $e');
+  static Stream<Map<String, dynamic>?> events(String eventName) {
+    _controllers[eventName] ??= StreamController.broadcast();
+    return _controllers[eventName]!.stream;
   }
 
-  // ── 2. Kopiuj modele z assets → absolutne ścieżki na dysku ──────────────
-  //
-  //  KLUCZOWE: sherpa_onnx nie potrafi czytać plików z Flutter asset bundle.
-  //  ModelExtractor kopiuje je do getApplicationSupportDirectory() raz,
-  //  przy kolejnych uruchomieniach używa cache (pliki już istnieją).
-  //
-  _status(service, 'Kopiuję modele...');
-  Map<String, String> modelPaths;
-  try {
-    modelPaths = await ModelExtractor.extractAll();
-    _status(service, 'Modele gotowe ✓');
-  } catch (e) {
-    _status(service, 'Modele BŁĄD: $e');
-    service.invoke(AsrEvents.error, {'message': 'Model extraction failed: $e'});
-    return;
+  static void _emit(String eventName, [Map<String, dynamic>? data]) {
+    _controllers[eventName]?.add(data ?? {});
   }
 
-  // ── 3. Plik keywords – też musi być absolutną ścieżką ───────────────────
-  //
-  //  Directory.systemTemp jest niedostępny na iOS w izolacje tła.
-  //  Używamy getApplicationSupportDirectory() – zawsze dostępne.
-  //
-  String keywordsPath;
-  try {
-    final dir = await getApplicationSupportDirectory();
-    keywordsPath = '${dir.path}/kws_keywords.txt';
-    await File(keywordsPath).writeAsString(
-      'make @1.5\nswish @1.5\nmiss @1.5\nundo @1.5\ndone @1.5\n',
-    );
-    _status(service, 'Keywords OK');
-  } catch (e) {
-    _status(service, 'Keywords BŁĄD: $e');
-    service.invoke(AsrEvents.error, {'message': 'Keywords file failed: $e'});
-    return;
+  static Future<void> startSession() async {
+    await _instance.startSession(onEvent: _emit);
   }
 
-  // ── 4. Silnik ASR ──────────────────────────────────────────────────────
-  final asrEngine = AsrEngine(
-    vadModelPath: modelPaths['silero_vad.onnx']!,
-    encoderPath: modelPaths['kws_encoder.onnx']!,
-    decoderPath: modelPaths['kws_decoder.onnx']!,
-    joinerPath: modelPaths['kws_joiner.onnx']!,
-    tokensPath: modelPaths['kws_tokens.txt']!,
-    keywordsFilePath: keywordsPath,
-  );
-
-  try {
-    await asrEngine.init();
-    _status(service, 'ASR Engine OK ✓');
-  } catch (e) {
-    _status(service, 'ASR init BŁĄD: $e');
-    service.invoke(AsrEvents.error, {'message': 'ASR init failed: $e'});
-    return;
+  static Future<void> stopListening() async {
+    await _instance.stopListening();
   }
 
-  // ── 5. Odtwarzacz feedbacku ────────────────────────────────────────────
-  final feedback = AudioFeedback();
-  try {
-    await feedback.init();
-    _status(service, 'Dźwięki OK ✓');
-  } catch (e) {
-    // Nie przerywamy – aplikacja działa bez dźwięku
-    _status(service, 'Dźwięki BŁĄD: $e (kontynuuję)');
-  }
-
-  // ── 6. Przekazanie callbacków wyniku ASR ──────────────────────────────
-  asrEngine.onKeyword = (String keyword) async {
-    final k = keyword.trim().toLowerCase();
-    _status(service, '🎤 "$k"');
-    switch (k) {
-      case 'make':
-        await feedback.playMake();
-        service.invoke(AsrEvents.shotMake, {});
-        break;
-      case 'swish':
-        await feedback.playSwish();
-        service.invoke(AsrEvents.shotSwish, {});
-        break;
-      case 'miss':
-        await feedback.playMiss();
-        service.invoke(AsrEvents.shotMiss, {});
-        break;
-      case 'undo':
-        await feedback.playUndo();
-        service.invoke(AsrEvents.shotUndo, {});
-        break;
-      case 'done':
-        await feedback.playEnd();
-        service.invoke(AsrEvents.finish, {});
-        break;
+  static Future<void> shutdown() async {
+    await _instance.shutdown();
+    // Zamknij kontrolery
+    for (final c in _controllers.values) {
+      await c.close();
     }
-  };
+    _controllers.clear();
+  }
 
-  asrEngine.onVadStateChange = (bool active) {
-    service.invoke(AsrEvents.voiceState, {'active': active});
-  };
+  static Future<bool> get isRunning async => _instance.isRunning;
+}
 
-  // ── 7. Komendy z UI ────────────────────────────────────────────────────
-  service.on(AsrCommands.startListening).listen((_) async {
-    _status(service, 'Start nasłuchiwania...');
+// ═══════════════════════════════════════════════════════════════════════════
+//  IMPLEMENTACJA SERWISU – główny izolat
+// ═══════════════════════════════════════════════════════════════════════════
+
+class _AsrServiceImpl {
+  AudioRouter? _audioRouter;
+  AsrEngine? _asrEngine;
+  AudioFeedback? _feedback;
+  bool _running = false;
+
+  bool get isRunning => _running;
+
+  void Function(String, Map<String, dynamic>?)? _emit;
+
+  void _status(String msg) {
+    debugPrint('[ASR] $msg');
+    _emit?.call(AsrEvents.status, {'msg': msg});
+  }
+
+  Future<void> startSession({
+    required void Function(String, Map<String, dynamic>?) onEvent,
+  }) async {
+    if (_running) return;
+    _emit = onEvent;
+
+    _status('Inicjalizacja...');
+
+    // ── Wakelock – ekran nie zgaśnie podczas sesji ─────────────────────
     try {
-      await audioRouter.activateForRecording();
-      await asrEngine.start();
-      _status(service, 'Nasłuchuję ✓');
+      await WakelockPlus.enable();
+      _status('Wakelock OK');
     } catch (e) {
-      _status(service, 'Start BŁĄD: $e');
-      service.invoke(AsrEvents.error, {'message': 'Start failed: $e'});
+      _status('Wakelock error: $e (kontynuuję)');
     }
-  });
 
-  service.on(AsrCommands.stopListening).listen((_) async {
-    debugPrint('[BG] Stop listening');
-    await asrEngine.stop();
-    await audioRouter.deactivate();
-    _status(service, 'Zatrzymano');
-  });
+    // ── Audio session ──────────────────────────────────────────────────
+    _audioRouter = AudioRouter();
+    try {
+      await _audioRouter!.configure();
+      _status('Audio session OK');
+    } catch (e) {
+      _status('Audio session BŁĄD: $e');
+    }
 
-  service.on(AsrCommands.shutdown).listen((_) async {
-    debugPrint('[BG] Shutdown');
-    await asrEngine.stop();
-    await asrEngine.dispose();
-    await feedback.dispose();
-    await audioRouter.deactivate();
-    service.stopSelf();
-  });
+    // ── Kopiuj modele ──────────────────────────────────────────────────
+    _status('Kopiuję modele...');
+    Map<String, String> modelPaths;
+    try {
+      modelPaths = await ModelExtractor.extractAll();
+      _status('Modele gotowe ✓');
+    } catch (e) {
+      _status('Modele BŁĄD: $e');
+      onEvent(AsrEvents.error, {'message': 'Model extraction failed: $e'});
+      return;
+    }
 
-  _status(service, 'Gotowy – czekam na start_listening');
+    // ── Keywords file ──────────────────────────────────────────────────
+    String keywordsPath;
+    try {
+      final dir = await getApplicationSupportDirectory();
+      keywordsPath = '${dir.path}/kws_keywords.txt';
+      await File(keywordsPath).writeAsString(
+        'MAKE @1.5\nSWISH @1.5\nMISS @1.5\nUNDO @1.5\nDONE @1.5\n',
+      );
+      _status('Keywords OK');
+    } catch (e) {
+      _status('Keywords BŁĄD: $e');
+      onEvent(AsrEvents.error, {'message': 'Keywords file failed: $e'});
+      return;
+    }
+
+    // ── ASR Engine ──────────────────────────────────────────────────────
+    _asrEngine = AsrEngine(
+      vadModelPath: modelPaths['silero_vad.onnx']!,
+      encoderPath: modelPaths['kws_encoder.onnx']!,
+      decoderPath: modelPaths['kws_decoder.onnx']!,
+      joinerPath: modelPaths['kws_joiner.onnx']!,
+      tokensPath: modelPaths['kws_tokens.txt']!,
+      keywordsFilePath: keywordsPath,
+    );
+
+    try {
+      await _asrEngine!.init();
+      _status('ASR Engine OK ✓');
+    } catch (e) {
+      _status('ASR init BŁĄD: $e');
+      onEvent(AsrEvents.error, {'message': 'ASR init failed: $e'});
+      return;
+    }
+
+    // ── Audio feedback ─────────────────────────────────────────────────
+    _feedback = AudioFeedback();
+    try {
+      await _feedback!.init();
+      _status('Dźwięki OK ✓');
+    } catch (e) {
+      _status('Dźwięki BŁĄD: $e (kontynuuję)');
+    }
+
+    // ── Callbacki ──────────────────────────────────────────────────────
+    _asrEngine!.onKeyword = (String keyword) async {
+      _status('🎤 "$keyword"');
+      switch (keyword) {
+        case 'make':
+          await _feedback?.playMake();
+          onEvent(AsrEvents.shotMake, {});
+          break;
+        case 'swish':
+          await _feedback?.playSwish();
+          onEvent(AsrEvents.shotSwish, {});
+          break;
+        case 'miss':
+          await _feedback?.playMiss();
+          onEvent(AsrEvents.shotMiss, {});
+          break;
+        case 'undo':
+          await _feedback?.playUndo();
+          onEvent(AsrEvents.shotUndo, {});
+          break;
+        case 'done':
+          await _feedback?.playEnd();
+          onEvent(AsrEvents.finish, {});
+          break;
+      }
+    };
+
+    _asrEngine!.onVadStateChange = (bool active) {
+      onEvent(AsrEvents.voiceState, {'active': active});
+    };
+
+    // ── Start nagrywania ───────────────────────────────────────────────
+    try {
+      await _audioRouter!.activateForRecording();
+      await _asrEngine!.start();
+      _running = true;
+      _status('Nasłuchuję ✓');
+    } catch (e) {
+      _status('Start BŁĄD: $e');
+      onEvent(AsrEvents.error, {'message': 'Start failed: $e'});
+    }
+  }
+
+  Future<void> stopListening() async {
+    await _asrEngine?.stop();
+    await _audioRouter?.deactivate();
+    _running = false;
+    _status('Zatrzymano');
+  }
+
+  Future<void> shutdown() async {
+    await _asrEngine?.stop();
+    await _asrEngine?.dispose();
+    await _feedback?.dispose();
+    await _audioRouter?.deactivate();
+    try {
+      await WakelockPlus.disable();
+    } catch (_) {}
+    _asrEngine = null;
+    _feedback = null;
+    _audioRouter = null;
+    _running = false;
+    _emit = null;
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-//  AUDIO ROUTER – konfiguracja sesji i routing Bluetooth
+//  AUDIO ROUTER
 // ═══════════════════════════════════════════════════════════════════════════
 
 class AudioRouter {
@@ -304,7 +292,6 @@ class AudioRouter {
             AndroidAudioFocusGainType.gainTransientMayDuck,
         androidWillPauseWhenDucked: false,
       ));
-      debugPrint('[AudioRouter] iOS skonfigurowany: playAndRecord + BT + duck');
     } else if (Platform.isAndroid) {
       await _session!.configure(const AudioSessionConfiguration(
         androidAudioAttributes: AndroidAudioAttributes(
@@ -315,7 +302,6 @@ class AudioRouter {
             AndroidAudioFocusGainType.gainTransientMayDuck,
         androidWillPauseWhenDucked: false,
       ));
-      debugPrint('[AudioRouter] Android skonfigurowany: base + duck');
     }
   }
 
@@ -329,7 +315,6 @@ class AudioRouter {
     if (_session == null) return;
     if (Platform.isAndroid) await _deactivateAndroidBluetooth();
     await _session!.setActive(false);
-    debugPrint('[AudioRouter] Sesja audio dezaktywowana');
   }
 
   static const _btChannel = MethodChannel('com.yourapp/bluetooth_sco');
@@ -342,13 +327,11 @@ class AudioRouter {
       if (hasSco) {
         await _btChannel.invokeMethod('startSco');
         _scoActive = true;
-        debugPrint('[AudioRouter] Android: SCO aktywowane');
       } else {
         await _btChannel.invokeMethod('setSpeakerphoneOn', true);
-        debugPrint('[AudioRouter] Android: głośnik wbudowany (brak BT)');
       }
     } on PlatformException catch (e) {
-      debugPrint('[AudioRouter] BT error: $e – fallback do wbudowanego');
+      debugPrint('[AudioRouter] BT error: $e');
     }
   }
 
@@ -357,7 +340,6 @@ class AudioRouter {
     try {
       await _btChannel.invokeMethod('stopSco');
       _scoActive = false;
-      debugPrint('[AudioRouter] Android: SCO zatrzymane');
     } on PlatformException catch (e) {
       debugPrint('[AudioRouter] stopSco error: $e');
     }
@@ -365,11 +347,10 @@ class AudioRouter {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-//  ASR ENGINE – VAD → KeywordSpotter pipeline
+//  ASR ENGINE
 // ═══════════════════════════════════════════════════════════════════════════
 
 class AsrEngine {
-  // Absolutne ścieżki plików – przekazane z ModelExtractor
   final String vadModelPath;
   final String encoderPath;
   final String decoderPath;
@@ -378,17 +359,15 @@ class AsrEngine {
   final String keywordsFilePath;
 
   static const int _kSampleRate = 16000;
+  static const int _kChunkSamples = 512;
 
   sherpa.VoiceActivityDetector? _vad;
   sherpa.KeywordSpotter? _spotter;
-
   AudioRecorder? _recorder;
   StreamSubscription<Uint8List>? _audioSub;
 
   bool _running = false;
   bool _vadActive = false;
-
-  final List<Float32List> _speechBuffer = [];
 
   void Function(String keyword)? onKeyword;
   void Function(bool active)? onVadStateChange;
@@ -403,24 +382,21 @@ class AsrEngine {
   });
 
   Future<void> init() async {
-    debugPrint('[ASR] Inicjalizacja modeli...');
-    debugPrint('[ASR] VAD: $vadModelPath');
-    debugPrint('[ASR] Encoder: $encoderPath');
-    debugPrint('[ASR] Keywords: $keywordsFilePath');
+    debugPrint('[AsrEngine] VAD: $vadModelPath');
+    debugPrint('[AsrEngine] Encoder: $encoderPath');
 
-    // ── VAD: Silero ────────────────────────────────────────────────────────
     final vadConfig = sherpa.VadModelConfig(
       sileroVad: sherpa.SileroVadModelConfig(
-        model: vadModelPath, // ABSOLUTNA ścieżka na dysku
+        model: vadModelPath,
         threshold: 0.45,
         minSilenceDuration: 0.30,
         minSpeechDuration: 0.20,
-        windowSize: 512,
+        windowSize: _kChunkSamples,
         maxSpeechDuration: 8.0,
       ),
+      sampleRate: _kSampleRate,
       numThreads: 1,
       debug: false,
-      sampleRate: _kSampleRate,
     );
 
     _vad = sherpa.VoiceActivityDetector(
@@ -428,29 +404,27 @@ class AsrEngine {
       bufferSizeInSeconds: 30,
     );
 
-    // ── Keyword Spotter ────────────────────────────────────────────────────
     final spotterConfig = sherpa.KeywordSpotterConfig(
       model: sherpa.OnlineModelConfig(
         transducer: sherpa.OnlineTransducerModelConfig(
-          encoder: encoderPath, // ABSOLUTNA ścieżka na dysku
+          encoder: encoderPath,
           decoder: decoderPath,
           joiner: joinerPath,
         ),
-        tokens: tokensPath, // ABSOLUTNA ścieżka na dysku
+        tokens: tokensPath,
         numThreads: 2,
         debug: false,
       ),
-      keywordsFile: keywordsFilePath, // ABSOLUTNA ścieżka na dysku
+      keywordsFile: keywordsFilePath,
     );
 
     _spotter = sherpa.KeywordSpotter(spotterConfig);
-    debugPrint('[ASR] Modele załadowane: VAD + KeywordSpotter');
+    debugPrint('[AsrEngine] VAD + KeywordSpotter OK');
   }
 
   Future<void> start() async {
     if (_running) return;
     _running = true;
-    _speechBuffer.clear();
 
     _recorder = AudioRecorder();
     final stream = await _recorder!.startStream(
@@ -466,11 +440,9 @@ class AsrEngine {
     );
 
     _audioSub = stream.listen(
-      _processAudioChunk,
-      onError: (e) => debugPrint('[ASR] Stream error: $e'),
+      _processChunk,
+      onError: (e) => debugPrint('[AsrEngine] Stream error: $e'),
     );
-
-    debugPrint('[ASR] Nagrywanie PCM 16kHz mono – start');
   }
 
   Future<void> stop() async {
@@ -481,12 +453,10 @@ class AsrEngine {
     await _recorder?.stop();
     _recorder?.dispose();
     _recorder = null;
-    _speechBuffer.clear();
     if (_vadActive) {
       _vadActive = false;
       onVadStateChange?.call(false);
     }
-    debugPrint('[ASR] Zatrzymano nagrywanie');
   }
 
   Future<void> dispose() async {
@@ -497,14 +467,12 @@ class AsrEngine {
     _spotter = null;
   }
 
-  void _processAudioChunk(Uint8List bytes) {
+  void _processChunk(Uint8List bytes) {
     if (_vad == null || _spotter == null) return;
-
-    final samples = _int16BytesToFloat32(bytes);
+    final samples = _int16ToFloat32(bytes);
     _vad!.acceptWaveform(samples);
 
     bool speechNow = false;
-
     while (!_vad!.isEmpty()) {
       final segment = _vad!.front();
       _vad!.pop();
@@ -512,17 +480,14 @@ class AsrEngine {
       speechNow = true;
 
       final stream = _spotter!.createStream();
-      stream.acceptWaveform(
-        samples: segment.samples,
-        sampleRate: _kSampleRate,
-      );
+      stream.acceptWaveform(samples: segment.samples, sampleRate: _kSampleRate);
       _spotter!.decode(stream);
       final result = _spotter!.getResult(stream);
       stream.free();
 
       final keyword = result.keyword.trim().toLowerCase();
       if (keyword.isNotEmpty && keyword != '[unk]') {
-        debugPrint('[ASR] ✓ Keyword wykryty: "$keyword"');
+        debugPrint('[AsrEngine] ✓ "$keyword"');
         onKeyword?.call(keyword);
       }
     }
@@ -533,51 +498,39 @@ class AsrEngine {
     }
   }
 
-  static Float32List _int16BytesToFloat32(Uint8List bytes) {
-    final samples = Float32List(bytes.length ~/ 2);
-    final byteData = bytes.buffer.asByteData();
-    for (int i = 0; i < samples.length; i++) {
-      samples[i] = byteData.getInt16(i * 2, Endian.little) / 32768.0;
+  static Float32List _int16ToFloat32(Uint8List bytes) {
+    final out = Float32List(bytes.length ~/ 2);
+    final bd = bytes.buffer.asByteData();
+    for (int i = 0; i < out.length; i++) {
+      out[i] = bd.getInt16(i * 2, Endian.little) / 32768.0;
     }
-    return samples;
+    return out;
   }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-//  AUDIO FEEDBACK – just_audio, niskie opóźnienie
+//  AUDIO FEEDBACK
 // ═══════════════════════════════════════════════════════════════════════════
 
 class AudioFeedback {
-  late final AudioPlayer _pMake;
-  late final AudioPlayer _pSwish;
-  late final AudioPlayer _pMiss;
-  late final AudioPlayer _pUndo;
-  late final AudioPlayer _pEnd;
-
+  late final AudioPlayer _pMake, _pSwish, _pMiss, _pUndo, _pEnd;
   bool _ready = false;
 
   Future<void> init() async {
-    try {
-      _pMake = AudioPlayer();
-      _pSwish = AudioPlayer();
-      _pMiss = AudioPlayer();
-      _pUndo = AudioPlayer();
-      _pEnd = AudioPlayer();
+    _pMake = AudioPlayer();
+    _pSwish = AudioPlayer();
+    _pMiss = AudioPlayer();
+    _pUndo = AudioPlayer();
+    _pEnd = AudioPlayer();
 
-      await Future.wait([
-        _pMake.setAudioSource(AudioSource.asset('assets/sounds/hit.mp3')),
-        _pSwish.setAudioSource(AudioSource.asset('assets/sounds/swish.mp3')),
-        _pMiss.setAudioSource(AudioSource.asset('assets/sounds/miss.mp3')),
-        _pUndo.setAudioSource(AudioSource.asset('assets/sounds/undo.mp3')),
-        _pEnd.setAudioSource(AudioSource.asset('assets/sounds/end.mp3')),
-      ]);
-
-      _ready = true;
-      debugPrint('[AudioFeedback] Dźwięki wstępnie załadowane');
-    } catch (e) {
-      debugPrint('[AudioFeedback] Init error: $e');
-      _ready = false;
-    }
+    await Future.wait([
+      _pMake.setAudioSource(AudioSource.asset('assets/sounds/hit.mp3')),
+      _pSwish.setAudioSource(AudioSource.asset('assets/sounds/swish.mp3')),
+      _pMiss.setAudioSource(AudioSource.asset('assets/sounds/miss.mp3')),
+      _pUndo.setAudioSource(AudioSource.asset('assets/sounds/undo.mp3')),
+      _pEnd.setAudioSource(AudioSource.asset('assets/sounds/end.mp3')),
+    ]);
+    _ready = true;
   }
 
   Future<void> _play(AudioPlayer p) async {
@@ -586,7 +539,7 @@ class AudioFeedback {
       await p.seek(Duration.zero);
       await p.play();
     } catch (e) {
-      debugPrint('[AudioFeedback] Play error: $e');
+      debugPrint('Audio: $e');
     }
   }
 
@@ -601,33 +554,4 @@ class AudioFeedback {
       await p.dispose();
     }
   }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-//  POMOCNIK UI – statyczna fasada dla session_tracking_screen.dart
-// ═══════════════════════════════════════════════════════════════════════════
-
-class BackgroundAsrService {
-  static final _svc = FlutterBackgroundService();
-
-  static Future<void> startSession() async {
-    await _svc.startService();
-    // Czas na inicjalizację modeli (~1-2s przy pierwszym uruchomieniu)
-    await Future.delayed(const Duration(milliseconds: 800));
-    _svc.invoke(AsrCommands.startListening);
-  }
-
-  static Future<void> stopListening() async {
-    _svc.invoke(AsrCommands.stopListening);
-  }
-
-  static Future<void> shutdown() async {
-    _svc.invoke(AsrCommands.shutdown);
-  }
-
-  static Stream<Map<String, dynamic>?> events(String eventName) {
-    return _svc.on(eventName);
-  }
-
-  static Future<bool> get isRunning => _svc.isRunning();
 }

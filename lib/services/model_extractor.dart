@@ -5,6 +5,7 @@
 // Ta klasa robi to raz przy pierwszym uruchomieniu, potem używa cache.
 
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 
@@ -32,25 +33,25 @@ class ModelExtractor {
       final destFile = File('${dir.path}/$fileName');
 
       if (!await destFile.exists()) {
-        print('$_tag Kopiuję $assetPath → ${destFile.path}');
+        debugPrint('$_tag Kopiuję $assetPath → ${destFile.path}');
         try {
           final bytes = await rootBundle.load(assetPath);
           await destFile.writeAsBytes(
             bytes.buffer.asUint8List(bytes.offsetInBytes, bytes.lengthInBytes),
           );
-          print('$_tag OK: $fileName (${destFile.lengthSync()} bytes)');
+          debugPrint('$_tag OK: $fileName (${destFile.lengthSync()} bytes)');
         } catch (e) {
-          print('$_tag BŁĄD kopiowania $assetPath: $e');
+          debugPrint('$_tag BŁĄD kopiowania $assetPath: $e');
           rethrow;
         }
       } else {
-        print('$_tag Cache hit: $fileName');
+        debugPrint('$_tag Cache hit: $fileName');
       }
 
       result[fileName] = destFile.path;
     }
 
-    print('$_tag Wszystkie modele gotowe w: ${dir.path}');
+    debugPrint('$_tag Wszystkie modele gotowe w: ${dir.path}');
     return result;
   }
 
@@ -61,6 +62,6 @@ class ModelExtractor {
       final f = File('${dir.path}/$fileName');
       if (await f.exists()) await f.delete();
     }
-    print('$_tag Cache wyczyszczony');
+    debugPrint('$_tag Cache wyczyszczony');
   }
 }
