@@ -381,35 +381,9 @@ class AsrEngine {
     required this.keywordsFilePath,
   });
 
-  // Future<void> init() async {
-  //   debugPrint('[AsrEngine] VAD: $vadModelPath');
-  //   debugPrint('[AsrEngine] Encoder: $encoderPath');
-
-  //   _vad = sherpa.VoiceActivityDetector(
-  //     config: vadConfig,
-  //     bufferSizeInSeconds: 30,
-  //   );
-
-  //   final spotterConfig = sherpa.KeywordSpotterConfig(
-  //     model: sherpa.OnlineModelConfig(
-  //       transducer: sherpa.OnlineTransducerModelConfig(
-  //         encoder: encoderPath,
-  //         decoder: decoderPath,
-  //         joiner: joinerPath,
-  //       ),
-  //       tokens: tokensPath,
-  //       numThreads: 2,
-  //       debug: false,
-  //     ),
-  //     keywordsFile: keywordsFilePath,
-  //   );
-
-  //   _spotter = sherpa.KeywordSpotter(spotterConfig);
-  //   debugPrint('[AsrEngine] VAD + KeywordSpotter OK');
-  // }
-
   Future<void> init() async {
-    debugPrint('[AsrEngine] Init VAD');
+    debugPrint('[AsrEngine] Init VAD...');
+
     final vadConfig = sherpa.VadModelConfig(
       sileroVad: sherpa.SileroVadModelConfig(
         model: vadModelPath,
@@ -423,11 +397,29 @@ class AsrEngine {
       numThreads: 1,
       debug: false,
     );
+
     _vad = sherpa.VoiceActivityDetector(
       config: vadConfig,
       bufferSizeInSeconds: 30,
     );
-    debugPrint('[AsrEngine] Init VAD OK');
+    debugPrint('[AsrEngine] VAD OK');
+
+    final spotterConfig = sherpa.KeywordSpotterConfig(
+      model: sherpa.OnlineModelConfig(
+        transducer: sherpa.OnlineTransducerModelConfig(
+          encoder: encoderPath,
+          decoder: decoderPath,
+          joiner: joinerPath,
+        ),
+        tokens: tokensPath,
+        numThreads: 2,
+        debug: false,
+      ),
+      keywordsFile: keywordsFilePath,
+    );
+    debugPrint('[AsrEngine] Tworzę KeywordSpotter...');
+    _spotter = sherpa.KeywordSpotter(spotterConfig);
+    debugPrint('[AsrEngine] KeywordSpotter OK');
   }
 
   Future<void> start() async {
