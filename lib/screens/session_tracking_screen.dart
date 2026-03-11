@@ -261,6 +261,7 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
         _voiceOn = true;
         _serviceReady = false;
         _debugLog.clear();
+        _showDebug = true;
       });
       _flash('VOICE ON', AppColors.gold);
 

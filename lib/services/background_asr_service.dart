@@ -381,45 +381,51 @@ class AsrEngine {
     required this.keywordsFilePath,
   });
 
+  // Future<void> init() async {
+  //   debugPrint('[AsrEngine] VAD: $vadModelPath');
+  //   debugPrint('[AsrEngine] Encoder: $encoderPath');
+
+  //   final vadConfig = sherpa.VadModelConfig(
+  //     sileroVad: sherpa.SileroVadModelConfig(
+  //       model: vadModelPath,
+  //       threshold: 0.45,
+  //       minSilenceDuration: 0.30,
+  //       minSpeechDuration: 0.20,
+  //       windowSize: _kChunkSamples,
+  //       maxSpeechDuration: 8.0,
+  //     ),
+  //     sampleRate: _kSampleRate,
+  //     numThreads: 1,
+  //     debug: false,
+  //   );
+
+  //   _vad = sherpa.VoiceActivityDetector(
+  //     config: vadConfig,
+  //     bufferSizeInSeconds: 30,
+  //   );
+
+  //   final spotterConfig = sherpa.KeywordSpotterConfig(
+  //     model: sherpa.OnlineModelConfig(
+  //       transducer: sherpa.OnlineTransducerModelConfig(
+  //         encoder: encoderPath,
+  //         decoder: decoderPath,
+  //         joiner: joinerPath,
+  //       ),
+  //       tokens: tokensPath,
+  //       numThreads: 2,
+  //       debug: false,
+  //     ),
+  //     keywordsFile: keywordsFilePath,
+  //   );
+
+  //   _spotter = sherpa.KeywordSpotter(spotterConfig);
+  //   debugPrint('[AsrEngine] VAD + KeywordSpotter OK');
+  // }
+
   Future<void> init() async {
-    debugPrint('[AsrEngine] VAD: $vadModelPath');
-    debugPrint('[AsrEngine] Encoder: $encoderPath');
+    debugPrint('[AsrEngine] TEST init – bez sherpa');
 
-    final vadConfig = sherpa.VadModelConfig(
-      sileroVad: sherpa.SileroVadModelConfig(
-        model: vadModelPath,
-        threshold: 0.45,
-        minSilenceDuration: 0.30,
-        minSpeechDuration: 0.20,
-        windowSize: _kChunkSamples,
-        maxSpeechDuration: 8.0,
-      ),
-      sampleRate: _kSampleRate,
-      numThreads: 1,
-      debug: false,
-    );
-
-    _vad = sherpa.VoiceActivityDetector(
-      config: vadConfig,
-      bufferSizeInSeconds: 30,
-    );
-
-    final spotterConfig = sherpa.KeywordSpotterConfig(
-      model: sherpa.OnlineModelConfig(
-        transducer: sherpa.OnlineTransducerModelConfig(
-          encoder: encoderPath,
-          decoder: decoderPath,
-          joiner: joinerPath,
-        ),
-        tokens: tokensPath,
-        numThreads: 2,
-        debug: false,
-      ),
-      keywordsFile: keywordsFilePath,
-    );
-
-    _spotter = sherpa.KeywordSpotter(spotterConfig);
-    debugPrint('[AsrEngine] VAD + KeywordSpotter OK');
+    debugPrint('[AsrEngine] TEST init OK');
   }
 
   Future<void> start() async {
@@ -468,6 +474,7 @@ class AsrEngine {
   }
 
   void _processChunk(Uint8List bytes) {
+    return;
     if (_vad == null || _spotter == null) return;
     final samples = _int16ToFloat32(bytes);
     _vad!.acceptWaveform(samples);
