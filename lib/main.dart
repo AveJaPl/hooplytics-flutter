@@ -4,10 +4,11 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'config/supabase_config.dart';
 import 'screens/splash_screen.dart';
+import 'package:sherpa_onnx/sherpa_onnx.dart' as sherpa;
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-
+  sherpa.initBindings();
   await Supabase.initialize(
     url: SupabaseConfig.url,
     anonKey: SupabaseConfig.anonKey,
