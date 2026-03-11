@@ -238,68 +238,59 @@ class _TrainScreenState extends State<TrainScreen>
 
   Widget _header() => Padding(
         padding: const EdgeInsets.fromLTRB(24, 20, 24, 0),
-        child: Row(children: [
+        child: Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
           Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Text('GAME MODES',
-                style: AppText.ui(10,
-                    color: AppColors.text3,
-                    letterSpacing: 1.8,
-                    weight: FontWeight.w700)),
+                style: AppText.ui(11,
+                    color: AppColors.text2,
+                    letterSpacing: 1.4,
+                    weight: FontWeight.w800)),
             const SizedBox(height: 2),
             Text('Train', style: AppText.ui(24, weight: FontWeight.w800)),
           ]),
-          const Spacer(),
-          Container(
-            width: 38,
-            height: 38,
-            decoration: BoxDecoration(
-                color: AppColors.surface,
-                border: Border.all(color: AppColors.border),
-                borderRadius: BorderRadius.circular(10)),
-            child: const Icon(Icons.search_rounded,
-                size: 18, color: AppColors.text2),
-          ),
         ]),
       );
 
   // ── filter row ────────────────────────────────────────────────────────────
 
   Widget _filterRow() => Padding(
-      padding: const EdgeInsets.only(top: 16),
-      child: SizedBox(
-        width: double.infinity,
-        child: SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          physics: const BouncingScrollPhysics(),
-          padding: const EdgeInsets.symmetric(horizontal: 20),
-          child: Row(
-              children: List.generate(_filters.length, (i) {
+        padding: const EdgeInsets.fromLTRB(20, 14, 20, 0),
+        child: Row(
+          children: List.generate(_filters.length, (i) {
             final on = _filterIndex == i;
-            return GestureDetector(
-              onTap: () {
-                HapticFeedback.selectionClick();
-                setState(() => _filterIndex = i);
-              },
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 180),
-                margin: const EdgeInsets.only(right: 8),
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                decoration: BoxDecoration(
-                  color: on ? AppColors.gold : AppColors.surface,
-                  border:
-                      Border.all(color: on ? AppColors.gold : AppColors.border),
-                  borderRadius: BorderRadius.circular(20),
+            final isLast = i == _filters.length - 1;
+            return Expanded(
+              child: GestureDetector(
+                onTap: () {
+                  HapticFeedback.selectionClick();
+                  setState(() => _filterIndex = i);
+                },
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 170),
+                  margin: EdgeInsets.only(right: isLast ? 0 : 8),
+                  height: 32,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: on ? AppColors.gold : AppColors.surface,
+                    border: Border.all(
+                      color: on ? AppColors.gold : AppColors.border,
+                    ),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    _filters[i],
+                    style: AppText.ui(
+                      11,
+                      weight: FontWeight.w600,
+                      color: on ? AppColors.bg : AppColors.text2,
+                    ),
+                  ),
                 ),
-                child: Text(_filters[i],
-                    style: AppText.ui(13,
-                        weight: FontWeight.w600,
-                        color: on ? AppColors.bg : AppColors.text2)),
               ),
             );
-          })),
+          }),
         ),
-      ));
+      );
 
   // ── content list builder ──────────────────────────────────────────────────
 
@@ -375,10 +366,10 @@ class _TrainScreenState extends State<TrainScreen>
         padding: const EdgeInsets.only(bottom: 14),
         child: Row(children: [
           Text(text,
-              style: AppText.ui(10,
-                  color: AppColors.text3,
-                  letterSpacing: 1.8,
-                  weight: FontWeight.w700)),
+              style: AppText.ui(11,
+                  color: AppColors.text2,
+                  letterSpacing: 1.4,
+                  weight: FontWeight.w800)),
           const SizedBox(width: 12),
           Expanded(child: Container(height: 1, color: AppColors.borderSub)),
         ]),
@@ -512,8 +503,8 @@ class _FeaturedCard extends StatelessWidget {
                         size: 16, color: Colors.white),
                     const SizedBox(width: 6),
                     Text('Start',
-                        style: AppText.ui(13,
-                            weight: FontWeight.w700, color: Colors.white)),
+                        style: AppText.ui(14,
+                            weight: FontWeight.w800, color: Colors.white)),
                   ]),
                 ),
               ]),
@@ -572,7 +563,7 @@ class _TwoColGrid extends StatelessWidget {
                           style: AppText.ui(15, weight: FontWeight.w700)),
                       const SizedBox(height: 3),
                       Text(m.subtitle,
-                          style: AppText.ui(11, color: AppColors.text3)),
+                          style: AppText.ui(12, color: AppColors.text2)),
                       const SizedBox(height: 10),
                       Row(children: [
                         Icon(Icons.people_outline_rounded,
@@ -635,15 +626,12 @@ class _ListCard extends StatelessWidget {
                 ]),
                 const SizedBox(height: 3),
                 Text(mode.details,
-                    style: AppText.ui(11, color: AppColors.text3)),
+                    style: AppText.ui(12, color: AppColors.text2)),
               ])),
           const SizedBox(width: 10),
-          // Diff + chevron
+          // Diff pill
           Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
             _DiffPill(mode.difficulty, small: true),
-            const SizedBox(height: 8),
-            const Icon(Icons.arrow_forward_ios_rounded,
-                size: 12, color: AppColors.text3),
           ]),
         ]),
       ),
@@ -940,7 +928,7 @@ class _DiffPill extends StatelessWidget {
         border: Border.all(color: _color.withValues(alpha: 0.30)),
       ),
       child: Text(label,
-          style: AppText.ui(small ? 10 : 11,
+          style: AppText.ui(small ? 11 : 12,
               weight: FontWeight.w700, color: _color)),
     );
   }
@@ -954,10 +942,10 @@ class _NewBadge extends StatelessWidget {
             color: AppColors.gold.withValues(alpha: 0.16),
             borderRadius: BorderRadius.circular(5)),
         child: Text('NEW',
-            style: AppText.ui(9,
+            style: AppText.ui(11,
                 weight: FontWeight.w800,
                 color: AppColors.gold,
-                letterSpacing: 0.8)),
+                letterSpacing: 0.4)),
       );
 }
 

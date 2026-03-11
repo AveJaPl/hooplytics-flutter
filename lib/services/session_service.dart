@@ -60,12 +60,102 @@ class SessionService extends BaseService {
     }
   }
 
+  Future<Session> getSession(String sessionId) async {
+    try {
+      final userId = client.auth.currentUser?.id;
+      if (userId == null) throw Exception('Not logged in');
+
+      final response = await client
+          .from('sessions')
+          .select('*, shots(*)')
+          .eq('id', sessionId)
+          .eq('user_id', userId)
+          .single();
+
+      return Session.fromJson(response);
+    } catch (e) {
+      throw Exception('Failed to fetch session: $e');
+    }
+  }
+
+  Future<void> deleteSession(String sessionId) async {
+    try {
+      final userId = client.auth.currentUser?.id;
+      if (userId == null) throw Exception('Not logged in');
+
+      // Deleting the session will cascade delete shots if the DB is set up that way,
+      // but just in case, we'll do it manually if needed or rely on the query.
+      await client
+          .from('sessions')
+          .delete()
+          .eq('id', sessionId)
+          .eq('user_id', userId);
+    } catch (e) {
+      throw Exception('Failed to delete session: $e');
+    }
+  }
+
+  /// Updates an existing manual session and replaces its shots.
+  Future<void> updateManualSession(Session session, List<Shot> shots) async {
+    try {
+      final userId = client.auth.currentUser?.id;
+      if (userId == null) throw Exception('Not logged in');
+      final sessionId = session.id;
+      if (sessionId == null) throw Exception('Session ID required for update');
+
+      // 1. Update session record
+      await client
+          .from('sessions')
+          .update(session.toJson())
+          .eq('id', sessionId)
+          .eq('user_id', userId);
+
+      // 2. Delete existing shots for this session
+      await client
+          .from('shots')
+          .delete()
+          .eq('session_id', sessionId)
+          .eq('user_id', userId);
+
+      // 3. Insert new shots
+      if (shots.isNotEmpty) {
+        final shotsJson = shots.map((shot) {
+          final j = shot.toJson();
+          j['session_id'] = sessionId;
+          j['user_id'] = userId;
+          return j;
+        }).toList();
+
+        await client.from('shots').insert(shotsJson);
+      }
+    } catch (e) {
+      throw Exception('Failed to update session: $e');
+    }
+  }
+
   /// Computes all stats used by StatsScreen from real DB data.
-  Future<Map<String, dynamic>> getStatsData() async {
+  Future<Map<String, dynamic>> getStatsData(
+      {DateTime? startDate, DateTime? endDate}) async {
     final sessions = await getHistory();
 
     // ── Filter only shooting sessions (live + manual), exclude games ──
-    final shootingSessions = sessions.where((s) => s.type != 'game').toList();
+    var shootingSessions = sessions.where((s) => s.type != 'game').toList();
+
+    // ── Apply date filtering if provided ──
+    if (startDate != null) {
+      shootingSessions = shootingSessions.where((s) {
+        final d = s.createdAt;
+        if (d == null) return false;
+        return d.isAfter(startDate) || d.isAtSameMomentAs(startDate);
+      }).toList();
+    }
+    if (endDate != null) {
+      shootingSessions = shootingSessions.where((s) {
+        final d = s.createdAt;
+        if (d == null) return false;
+        return d.isBefore(endDate) || d.isAtSameMomentAs(endDate);
+      }).toList();
+    }
 
     // ── Lifetime totals ──
     int totalMade = 0, totalAttempts = 0;

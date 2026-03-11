@@ -29,6 +29,7 @@ import '../models/session.dart';
 import '../models/shot.dart';
 import '../services/background_asr_service.dart';
 import '../services/session_service.dart';
+import '../utils/performance.dart';
 import 'session_setup_screen.dart';
 
 enum ShotResult { miss, make, swish }
@@ -1098,20 +1099,12 @@ class _SummarySheetState extends State<_SummarySheet> {
 
   String get _grade {
     if (widget.attempts == 0) return '—';
-    final p = widget.made / widget.attempts;
-    if (p >= 0.85) return 'S';
-    if (p >= 0.75) return 'A';
-    if (p >= 0.65) return 'B';
-    if (p >= 0.50) return 'C';
-    return 'D';
+    return PerformanceGuide.gradeFor(widget.made / widget.attempts);
   }
 
   Color get _gc {
     if (widget.attempts == 0) return AppColors.text3;
-    final p = widget.made / widget.attempts;
-    if (p >= 0.75) return AppColors.green;
-    if (p >= 0.50) return AppColors.gold;
-    return AppColors.red;
+    return PerformanceGuide.colorFor(widget.made / widget.attempts);
   }
 
   Future<void> _save() async {

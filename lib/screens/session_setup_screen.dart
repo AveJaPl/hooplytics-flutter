@@ -1,117 +1,15 @@
-import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../main.dart';
 import 'session_tracking_screen.dart';
 import '../services/session_service.dart';
+import '../widgets/basketball_court_map.dart';
 
 // ═════════════════════════════════════════════════════════════════════════════
 //  DATA TYPES
 // ═════════════════════════════════════════════════════════════════════════════
 
 enum SessionMode { position, range }
-
-class CourtSpot {
-  final String id, label;
-  final double fx, fy; // fractional position (0–1) within court widget
-  const CourtSpot(this.id, this.label, this.fx, this.fy);
-}
-
-class RangeZone {
-  final String id, label;
-  final int tier; // 0=layup 1=close 2=mid 3=three
-  const RangeZone(this.id, this.label, this.tier);
-}
-
-// ═════════════════════════════════════════════════════════════════════════════
-//  COURT GEOMETRY  ← single source of truth, shared by all painters & screens
-// ═════════════════════════════════════════════════════════════════════════════
-
-class CourtGeo {
-  final double w, h;
-  CourtGeo(this.w, this.h);
-
-  // ── court extent ────────────────────────────────────────────────────────────
-  double get baseY => h - 18.0; // baseline sits 18 px from bottom
-
-  // ── basket (FIBA: 1.575 m from baseline, court 15 m wide → 0.105) ──────────
-  double get bx => w / 2;
-  double get by => baseY - w * 0.105;
-
-  // ── key / paint box (4.9 m wide → 4.9/15 = 0.327, half = 0.163) ───────────
-  double get keyL => bx - w * 0.163;
-  double get keyR => bx + w * 0.163;
-
-  // ── free-throw line (5.8 m from baseline → 5.8/15 = 0.387) ────────────────
-  double get ftY => baseY - w * 0.387;
-
-  // ── free-throw circle radius (1.8 m → 1.8/15 = 0.120) ─────────────────────
-  double get ftR => w * 0.120;
-
-  // ── three-point arc (6.75 m radius → 6.75/15 = 0.450) ─────────────────────
-  double get tpArcR => w * 0.450;
-
-  // ── three-point corner x (6.6 m from centre → 0.440) ──────────────────────
-  double get tpL => bx - w * 0.440;
-  double get tpR => bx + w * 0.440;
-
-  // ── derived arc angles (used by painter AND zone builder) ──────────────────
-  // Angle at which the 3pt arc meets x = tpL  (above basket → negative angle)
-  double get tpStartAngle {
-    final cos = (tpL - bx) / tpArcR;
-    return -math.acos(cos.clamp(-1.0, 1.0));
-  }
-
-  // Positive (clockwise in Flutter) sweep from left to right through top
-  double get tpSweepAngle => -2.0 * tpStartAngle;
-
-  // y at which the arc meets the corner straight line
-  double get tpIntersectY => by + tpArcR * math.sin(tpStartAngle);
-
-  // ── restricted-area (layup) radius ─────────────────────────────────────────
-  double get raR => w * 0.083;
-
-  // layup zone = rim circle (same as raR for visual, slightly bigger for tap)
-  double get layupR => raR * 1.15;
-
-  // ── position spots (coordinates derived from geometry above) ───────────────
-  List<CourtSpot> get spots {
-    // Push 3pt spots further from the line so they don't overlap it
-    const radialPad = 0.044; // fraction of w
-    final spotR = tpArcR + w * radialPad;
-    const cornerXPad = 0.038; // extra outward nudge for corners
-
-    arcFx(double dx) => (bx + dx * w) / w;
-    arcFy(double absDx) {
-      final px = absDx * w;
-      if (px >= spotR) return by / h;
-      return (by - math.sqrt(spotR * spotR - px * px)) / h;
-    }
-
-    const wingDx = 0.385;
-    return [
-      CourtSpot('left_corner', 'Left Corner', (tpL / w) - cornerXPad,
-          (baseY - w * 0.045) / h),
-      CourtSpot('right_corner', 'Right Corner', (tpR / w) + cornerXPad,
-          (baseY - w * 0.045) / h),
-      CourtSpot('left_wing', 'Left Wing', arcFx(-wingDx), arcFy(wingDx)),
-      CourtSpot('right_wing', 'Right Wing', arcFx(wingDx), arcFy(wingDx)),
-      CourtSpot('top_arc', 'Top of Arc', 0.50, arcFy(0)),
-      CourtSpot('left_elbow', 'Left Elbow', keyL / w, ftY / h),
-      CourtSpot('right_elbow', 'Right Elbow', keyR / w, ftY / h),
-      CourtSpot(
-          'left_block', 'Left Block', (keyL / w) + 0.042, (by + w * 0.072) / h),
-      CourtSpot('right_block', 'Right Block', (keyR / w) - 0.042,
-          (by + w * 0.072) / h),
-      CourtSpot('free_throw', 'Free Throw', 0.50, ftY / h),
-      CourtSpot('high_arc', 'High Arc', 0.50, (ftY - w * 0.120) / h),
-      CourtSpot(
-          'left_mid', 'Left Mid', (keyL / w) - 0.115, (by - w * 0.135) / h),
-      CourtSpot(
-          'right_mid', 'Right Mid', (keyR / w) + 0.115, (by - w * 0.135) / h),
-    ];
-  }
-}
 
 // ═════════════════════════════════════════════════════════════════════════════
 //  SESSION SETUP SCREEN
@@ -165,11 +63,11 @@ class _SessionSetupScreenState extends State<SessionSetupScreen>
     _fetchStats();
   }
 
-  static const _zones = [
-    RangeZone('layup', 'Layup', 0),
-    RangeZone('close', 'Close Shot', 1),
-    RangeZone('mid', 'Mid Range', 2),
-    RangeZone('three', 'Three Point', 3),
+  final _zones = [
+    const RangeZone('layup', 'Layup', 0),
+    const RangeZone('close', 'Close Shot', 1),
+    const RangeZone('mid', 'Mid Range', 2),
+    const RangeZone('three', 'Three Point', 3),
   ];
 
   static const _spotIds = [
@@ -282,10 +180,10 @@ class _SessionSetupScreenState extends State<SessionSetupScreen>
           const SizedBox(width: 14),
           Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Text('NEW SESSION',
-                style: AppText.ui(9,
-                    color: AppColors.text3,
-                    letterSpacing: 1.8,
-                    weight: FontWeight.w700)),
+                style: AppText.ui(11,
+                    color: AppColors.text2,
+                    letterSpacing: 1.4,
+                    weight: FontWeight.w800)),
             const SizedBox(height: 1),
             Text('Select your shooting zone',
                 style: AppText.ui(16, weight: FontWeight.w700)),
@@ -384,10 +282,10 @@ class _SessionSetupScreenState extends State<SessionSetupScreen>
                                         CrossAxisAlignment.start,
                                     children: [
                                       Text('YOUR HISTORY',
-                                          style: AppText.ui(isSmall ? 9 : 10,
+                                          style: AppText.ui(11,
                                               color: AppColors.gold,
-                                              letterSpacing: 2.0,
-                                              weight: FontWeight.w700)),
+                                              letterSpacing: 1.5,
+                                              weight: FontWeight.w800)),
                                       SizedBox(height: isSmall ? 2 : 4),
                                       FittedBox(
                                         fit: BoxFit.scaleDown,
@@ -484,8 +382,10 @@ class _SessionSetupScreenState extends State<SessionSetupScreen>
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(label,
-            style: AppText.ui(isSmall ? 8 : 9,
-                color: AppColors.text3, letterSpacing: isSmall ? 0.8 : 1.0)),
+            style: AppText.ui(11,
+                color: AppColors.text2,
+                letterSpacing: 0.5,
+                weight: FontWeight.w700)),
         SizedBox(height: isSmall ? 1 : 2),
         Text(value, style: AppText.display(isSmall ? 20 : 24, color: color)),
       ],
@@ -496,56 +396,30 @@ class _SessionSetupScreenState extends State<SessionSetupScreen>
 
   Widget _court() => Padding(
         padding: const EdgeInsets.symmetric(horizontal: 20),
-        child: AspectRatio(
-          aspectRatio: 1.05,
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(18),
-            child: LayoutBuilder(builder: (_, c) {
-              final geo = CourtGeo(c.maxWidth, c.maxHeight);
-              return Stack(clipBehavior: Clip.none, children: [
-                // 1. court lines
-                Positioned.fill(
-                    child: CustomPaint(painter: CourtLinePainter(geo))),
-                // 2. zone fills (on top of lines, semi-transparent)
-                if (_mode == SessionMode.range)
-                  Positioned.fill(
-                      child: CustomPaint(
-                    painter: RangeZonePainter(geo, _selectedId, _zones),
-                  )),
-                // 3. spots OR range tap layer
-                if (_mode == SessionMode.position)
-                  ..._spotWidgets(geo)
-                else
-                  _zoneTapLayer(geo),
-              ]);
-            }),
-          ),
-        ),
-      );
-
-  List<Widget> _spotWidgets(CourtGeo geo) => geo.spots.map((s) {
-        final px = s.fx * geo.w;
-        final py = s.fy * geo.h;
-        return Positioned(
-          left: px - 28,
-          top: py - 28,
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: () => _select(s.id),
-            child:
-                CourtSpotWidget(selected: _selectedId == s.id, label: s.label),
-          ),
-        );
-      }).toList();
-
-  Widget _zoneTapLayer(CourtGeo geo) => Positioned.fill(
-        child: GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTapUp: (d) {
-            final id = RangeZonePainter.getZoneAt(geo, d.localPosition);
-            if (id != null) _select(id);
-          },
-          child: const SizedBox.expand(),
+        child: BasketballCourtMap(
+          mode: _mode == SessionMode.position
+              ? CourtMapMode.setup
+              : CourtMapMode.range,
+          selectedId: _selectedId,
+          onSpotTap: _select,
+          spots: _mode == SessionMode.position
+              ? const [
+                  MapSpotData(id: 'left_corner', label: 'Left Corner'),
+                  MapSpotData(id: 'right_corner', label: 'Right Corner'),
+                  MapSpotData(id: 'left_wing', label: 'Left Wing'),
+                  MapSpotData(id: 'right_wing', label: 'Right Wing'),
+                  MapSpotData(id: 'top_arc', label: 'Top of Arc'),
+                  MapSpotData(id: 'left_elbow', label: 'Left Elbow'),
+                  MapSpotData(id: 'right_elbow', label: 'Right Elbow'),
+                  MapSpotData(id: 'left_block', label: 'Left Block'),
+                  MapSpotData(id: 'right_block', label: 'Right Block'),
+                  MapSpotData(id: 'free_throw', label: 'Free Throw'),
+                  MapSpotData(id: 'high_arc', label: 'High Arc'),
+                  MapSpotData(id: 'left_mid', label: 'Left Mid'),
+                  MapSpotData(id: 'right_mid', label: 'Right Mid'),
+                ]
+              : const [],
+          zones: _zones.map((z) => RangeZone(z.id, z.label, z.tier)).toList(),
         ),
       );
 
@@ -572,344 +446,14 @@ class _SessionSetupScreenState extends State<SessionSetupScreen>
           ),
           child: Center(
             child: Text('Start Session',
-                style: AppText.ui(14,
+                style: AppText.ui(15,
                     weight: FontWeight.w700,
-                    color: active ? AppColors.bg : AppColors.text3)),
+                    color: active ? AppColors.bg : AppColors.text2)),
           ),
         ),
       ),
     );
   }
-}
-
-// ═════════════════════════════════════════════════════════════════════════════
-//  RANGE ZONE PAINTER
-//  Uses PathFillType.evenOdd for painting (guaranteed correct rendering).
-//  Uses pure-math hit-testing (no Path.combine, always reliable).
-// ═════════════════════════════════════════════════════════════════════════════
-
-class RangeZonePainter extends CustomPainter {
-  final CourtGeo g;
-  final String? selectedId;
-  final List<RangeZone> zones;
-
-  const RangeZonePainter(this.g, this.selectedId, this.zones);
-
-  // ── hit-test: which zone contains point p? ────────────────────────────────
-  static String? getZoneAt(CourtGeo g, Offset p) {
-    // Check if inside the 3pt area using the boundary path
-    if (!buildThreePointArea(g).contains(p)) return 'three';
-
-    // Inside 3pt area — check key box
-    final inKey =
-        p.dx >= g.keyL && p.dx <= g.keyR && p.dy >= g.ftY && p.dy <= g.baseY;
-    if (!inKey) return 'mid';
-
-    // Inside key box — check layup (rim) circle
-    final dx = p.dx - g.bx;
-    final dy = p.dy - g.by;
-    final inLayup = dx * dx + dy * dy <= g.raR * g.raR;
-    return inLayup ? 'layup' : 'close';
-  }
-
-  // ── path builders (evenOdd — correct for paint only) ─────────────────────
-  static Path buildZonePath(CourtGeo g, int tier) {
-    switch (tier) {
-      case 0: // Layup — small rim circle
-        return Path()
-          ..addOval(Rect.fromCircle(center: Offset(g.bx, g.by), radius: g.raR));
-
-      case 1: // Close Shot = paint box ("coffin") – rim circle
-        return Path()
-          ..fillType = PathFillType.evenOdd
-          ..addRect(Rect.fromLTRB(g.keyL, g.ftY, g.keyR, g.baseY))
-          ..addOval(Rect.fromCircle(center: Offset(g.bx, g.by), radius: g.raR));
-
-      case 2: // Mid Range = 3pt area – key box
-        return Path()
-          ..fillType = PathFillType.evenOdd
-          ..addPath(_tp(g), Offset.zero)
-          ..addRect(Rect.fromLTRB(g.keyL, g.ftY, g.keyR, g.baseY));
-
-      case 3: // Three Point = court rect – 3pt area
-      default:
-        return Path()
-          ..fillType = PathFillType.evenOdd
-          ..addRect(Rect.fromLTRB(0, 0, g.w, g.baseY))
-          ..addPath(_tp(g), Offset.zero);
-    }
-  }
-
-  /// Outline of the three-point region (corner straights + arc + baseline).
-  static Path _tp(CourtGeo g) {
-    final p = Path();
-    p.moveTo(g.tpL, g.baseY);
-    p.lineTo(g.tpL, g.tpIntersectY);
-    p.arcTo(
-      Rect.fromCircle(center: Offset(g.bx, g.by), radius: g.tpArcR),
-      g.tpStartAngle,
-      g.tpSweepAngle,
-      false,
-    );
-    p.lineTo(g.tpR, g.baseY);
-    p.close();
-    return p;
-  }
-
-  /// Same path but public (used by ManualEntryScreen hit-testing).
-  static Path buildThreePointArea(CourtGeo g) => _tp(g);
-
-  // ── paint ─────────────────────────────────────────────────────────────────
-  @override
-  void paint(Canvas canvas, Size size) {
-    canvas.save();
-    canvas.clipRect(Rect.fromLTRB(0, 0, g.w, g.baseY));
-
-    // 1. Idle zones — outline + label only
-    for (final z in zones) {
-      if (z.id == selectedId) continue;
-      final path = buildZonePath(g, z.tier);
-      canvas.drawPath(
-          path,
-          Paint()
-            ..color = AppColors.text3.withValues(alpha: 0.45)
-            ..style = PaintingStyle.stroke
-            ..strokeWidth = 1.0
-            ..isAntiAlias = true);
-      _label(canvas, z.label, _center(z.tier), false);
-    }
-
-    // 2. Selected zone — gold fill + gold stroke + pill label
-    if (selectedId != null) {
-      final z = zones.firstWhere((z) => z.id == selectedId,
-          orElse: () => zones.first);
-      final path = buildZonePath(g, z.tier);
-      canvas.drawPath(
-          path,
-          Paint()
-            ..color = AppColors.gold.withValues(alpha: 0.16)
-            ..style = PaintingStyle.fill);
-      canvas.drawPath(
-          path,
-          Paint()
-            ..color = AppColors.gold.withValues(alpha: 0.88)
-            ..style = PaintingStyle.stroke
-            ..strokeWidth = 1.8
-            ..isAntiAlias = true);
-      _label(canvas, z.label, _center(z.tier), true);
-    }
-
-    canvas.restore();
-  }
-
-  Offset _center(int tier) {
-    switch (tier) {
-      case 0:
-        return Offset(g.bx, g.by);
-      case 1:
-        return Offset(g.bx, g.ftY + (g.baseY - g.ftY) * 0.44);
-      case 2:
-        return Offset(g.bx, g.by - g.tpArcR * 0.82);
-      case 3:
-      default:
-        return Offset(g.bx, g.by - g.tpArcR * 1.30);
-    }
-  }
-
-  void _label(Canvas canvas, String text, Offset c, bool selected) {
-    final tp = TextPainter(
-      text: TextSpan(
-        text: text,
-        style: TextStyle(
-          color: selected
-              ? AppColors.gold
-              : AppColors.text2.withValues(alpha: 0.6),
-          fontSize: selected ? 13.0 : 11.5,
-          fontWeight: FontWeight.w600,
-          letterSpacing: 0.2,
-          height: 1.0,
-        ),
-      ),
-      textDirection: TextDirection.ltr,
-    )..layout();
-
-    if (selected) {
-      final r = Rect.fromCenter(
-          center: c, width: tp.width + 16, height: tp.height + 9);
-      canvas.drawRRect(RRect.fromRectAndRadius(r, const Radius.circular(7)),
-          Paint()..color = AppColors.gold.withValues(alpha: 0.14));
-      canvas.drawRRect(
-          RRect.fromRectAndRadius(r, const Radius.circular(7)),
-          Paint()
-            ..color = AppColors.gold.withValues(alpha: 0.50)
-            ..style = PaintingStyle.stroke
-            ..strokeWidth = 1.0);
-    }
-
-    tp.paint(canvas, Offset(c.dx - tp.width / 2, c.dy - tp.height / 2));
-  }
-
-  @override
-  bool shouldRepaint(covariant RangeZonePainter old) =>
-      old.selectedId != selectedId;
-}
-
-// ═════════════════════════════════════════════════════════════════════════════
-//  COURT LINE PAINTER
-// ═════════════════════════════════════════════════════════════════════════════
-
-class CourtLinePainter extends CustomPainter {
-  final CourtGeo g;
-  const CourtLinePainter(this.g);
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    // Background
-    canvas.drawRect(Rect.fromLTWH(0, 0, g.w, g.h),
-        Paint()..color = const Color(0xFF161618));
-
-    final line = Paint()
-      ..color = const Color(0xFF353540)
-      ..strokeWidth = 1.4
-      ..style = PaintingStyle.stroke
-      ..isAntiAlias = true;
-
-    final faint = Paint()
-      ..color = const Color(0xFF353540).withValues(alpha: 0.35)
-      ..strokeWidth = 1.0
-      ..style = PaintingStyle.stroke
-      ..isAntiAlias = true;
-
-    // Boundary lines
-    canvas.drawLine(Offset(0, g.baseY), Offset(g.w, g.baseY), line); // baseline
-    canvas.drawLine(
-        const Offset(1, 0), Offset(1, g.baseY), line); // left sideline
-    canvas.drawLine(
-        Offset(g.w - 1, 0), Offset(g.w - 1, g.baseY), line); // right sideline
-    canvas.drawLine(const Offset(0, 1), Offset(g.w, 1), line); // half-court
-
-    // Three-point arc + corner straights
-    canvas.drawArc(
-      Rect.fromCircle(center: Offset(g.bx, g.by), radius: g.tpArcR),
-      g.tpStartAngle,
-      g.tpSweepAngle,
-      false,
-      line,
-    );
-    canvas.drawLine(
-        Offset(g.tpL, g.tpIntersectY), Offset(g.tpL, g.baseY), line);
-    canvas.drawLine(
-        Offset(g.tpR, g.tpIntersectY), Offset(g.tpR, g.baseY), line);
-
-    // Key box
-    canvas.drawRect(Rect.fromLTRB(g.keyL, g.ftY, g.keyR, g.baseY), line);
-
-    // Free-throw circle — solid top half, faint bottom half
-    canvas.drawArc(Rect.fromCircle(center: Offset(g.bx, g.ftY), radius: g.ftR),
-        math.pi, math.pi, false, line);
-    canvas.drawArc(Rect.fromCircle(center: Offset(g.bx, g.ftY), radius: g.ftR),
-        0, math.pi, false, faint);
-
-    // Restricted area arc
-    canvas.drawArc(Rect.fromCircle(center: Offset(g.bx, g.by), radius: g.raR),
-        math.pi, math.pi, false, faint);
-
-    // Rim (gold)
-    canvas.drawCircle(
-        Offset(g.bx, g.by),
-        g.w * 0.040,
-        Paint()
-          ..color = AppColors.gold.withValues(alpha: 0.55)
-          ..strokeWidth = 2.0
-          ..style = PaintingStyle.stroke);
-
-    // Backboard
-    canvas.drawLine(
-      Offset(g.bx - g.w * 0.060, g.by + g.w * 0.074),
-      Offset(g.bx + g.w * 0.060, g.by + g.w * 0.074),
-      Paint()
-        ..color = AppColors.text2.withValues(alpha: 0.45)
-        ..strokeWidth = 2.4,
-    );
-  }
-
-  @override
-  bool shouldRepaint(CourtLinePainter _) => false;
-}
-
-// ═════════════════════════════════════════════════════════════════════════════
-//  SPOT WIDGET  (used by both SessionSetup and ManualEntry)
-// ═════════════════════════════════════════════════════════════════════════════
-
-class CourtSpotWidget extends StatefulWidget {
-  final bool selected;
-  final String label;
-  const CourtSpotWidget(
-      {required this.selected, required this.label, super.key});
-  @override
-  State<CourtSpotWidget> createState() => _CourtSpotWidgetState();
-}
-
-class _CourtSpotWidgetState extends State<CourtSpotWidget>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _pulse;
-
-  @override
-  void initState() {
-    super.initState();
-    _pulse = AnimationController(
-        vsync: this, duration: const Duration(milliseconds: 800))
-      ..repeat(reverse: true);
-  }
-
-  @override
-  void dispose() {
-    _pulse.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) => SizedBox(
-        width: 56,
-        height: 56,
-        child: Stack(alignment: Alignment.center, children: [
-          if (widget.selected)
-            AnimatedBuilder(
-              animation: _pulse,
-              builder: (_, __) => Container(
-                width: 38 * (0.76 + 0.24 * _pulse.value),
-                height: 38 * (0.76 + 0.24 * _pulse.value),
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  border: Border.all(
-                    color: AppColors.gold
-                        .withValues(alpha: 0.50 * (1 - _pulse.value)),
-                    width: 1.4,
-                  ),
-                ),
-              ),
-            ),
-          AnimatedContainer(
-            duration: const Duration(milliseconds: 200),
-            width: widget.selected ? 14 : 9,
-            height: widget.selected ? 14 : 9,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: widget.selected
-                  ? AppColors.gold
-                  : AppColors.text3.withValues(alpha: 0.40),
-              boxShadow: widget.selected
-                  ? [
-                      BoxShadow(
-                          color: AppColors.gold.withValues(alpha: 0.50),
-                          blurRadius: 10,
-                          spreadRadius: 1)
-                    ]
-                  : null,
-            ),
-          ),
-        ]),
-      );
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -956,7 +500,7 @@ class _Tab extends StatelessWidget {
               child: Text(label,
                   style: AppText.ui(13,
                       weight: FontWeight.w600,
-                      color: active ? AppColors.bg : AppColors.text3)),
+                      color: active ? AppColors.bg : AppColors.text2)),
             ),
           ),
         ),

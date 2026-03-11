@@ -4,7 +4,7 @@ import '../main.dart';
 import '../models/session.dart';
 import '../models/shot.dart';
 import '../services/session_service.dart';
-
+import '../utils/performance.dart';
 // ═════════════════════════════════════════════════════════════════════════════
 //  DUEL SCREEN  –  2 players, 10 shots each, same spot, best % wins
 // ═════════════════════════════════════════════════════════════════════════════
@@ -306,13 +306,8 @@ class _DuelScreenState extends State<DuelScreen> with TickerProviderStateMixin {
   Widget _buildPlaying() {
     final pct = _curAttempts == 0 ? 0.0 : _curMade / _curAttempts;
     final pctStr = _curAttempts == 0 ? '—' : '${(pct * 100).round()}%';
-    final pctColor = _curAttempts == 0
-        ? AppColors.text3
-        : (pct >= 0.70
-            ? AppColors.green
-            : pct >= 0.50
-                ? AppColors.gold
-                : AppColors.red);
+    final pctColor =
+        _curAttempts == 0 ? AppColors.text3 : PerformanceGuide.colorFor(pct);
     final shotsLeft = _shotsPerPlayer - _curAttempts;
 
     return Column(children: [

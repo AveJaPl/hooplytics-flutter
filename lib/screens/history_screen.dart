@@ -8,6 +8,7 @@ import 'session_setup_screen.dart';
 import '../models/session.dart';
 import '../models/shot.dart';
 import '../services/session_service.dart';
+import '../utils/performance.dart';
 
 // ═════════════════════════════════════════════════════════════════════════════
 //  DATA MODELS
@@ -35,6 +36,7 @@ class HistoryEntry {
   final List<bool>? shotLog;
   final HoopSession? hoopSession;
   final GameSessionData? gameData;
+  final Session originalSession;
 
   const HistoryEntry({
     required this.id,
@@ -50,6 +52,7 @@ class HistoryEntry {
     this.shotLog,
     this.hoopSession,
     this.gameData,
+    required this.originalSession,
   });
 
   double? get pct => (made != null && attempts != null && attempts! > 0)
@@ -57,13 +60,19 @@ class HistoryEntry {
       : null;
   String get pctStr => pct != null ? '${(pct! * 100).round()}%' : '—';
 
-  String get dateLabel {
-    final diff = DateTime.now().difference(date);
-    if (diff.inDays == 0) return 'Today';
-    if (diff.inDays == 1) return 'Yesterday';
-    if (diff.inDays < 7) return '${diff.inDays}d ago';
-    return '${date.day}.${date.month}.${date.year}';
+  static String _formatDate(DateTime d) {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final thatDay = DateTime(d.year, d.month, d.day);
+    final diff = today.difference(thatDay).inDays;
+
+    if (diff == 0) return 'Today';
+    if (diff == 1) return 'Yesterday';
+    if (diff < 7 && diff > 0) return '$diff d ago';
+    return '${d.day}.${d.month}.${d.year}';
   }
+
+  String get dateLabel => _formatDate(date);
 
   String get timeStr {
     if (elapsed.inSeconds == 0) return '—';
@@ -115,7 +124,7 @@ class HistoryEntry {
         id: s.selectionId,
         mode: s.mode == 'position' ? SessionMode.position : SessionMode.range,
         zone: s.selectionLabel,
-        dateLabel: '',
+        dateLabel: _formatDate(s.createdAt ?? DateTime.now()),
         date: s.createdAt ?? DateTime.now(),
         made: s.made,
         attempts: s.attempts,
@@ -149,6 +158,7 @@ class HistoryEntry {
       shotLog: s.shots?.map((e) => e.isMake).toList(),
       hoopSession: hoopSession,
       gameData: gameData,
+      originalSession: s,
     );
   }
 }
@@ -234,7 +244,6 @@ class _HistoryScreenState extends State<HistoryScreen>
         child: SafeArea(
             child: Column(children: [
           _header(),
-          const SizedBox(height: 4),
           _filterRow(),
           const SizedBox(height: 4),
           _summaryStrip(),
@@ -247,14 +256,14 @@ class _HistoryScreenState extends State<HistoryScreen>
   // ── header ────────────────────────────────────────────────────────────────
 
   Widget _header() => Padding(
-        padding: const EdgeInsets.fromLTRB(20, 18, 20, 0),
-        child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
+        padding: const EdgeInsets.fromLTRB(24, 20, 24, 0),
+        child: Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
           Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Text('HISTORY',
-                style: AppText.ui(9,
-                    color: AppColors.text3,
-                    letterSpacing: 1.8,
-                    weight: FontWeight.w700)),
+                style: AppText.ui(11,
+                    color: AppColors.text2,
+                    letterSpacing: 1.4,
+                    weight: FontWeight.w800)),
             const SizedBox(height: 2),
             Text('All Sessions',
                 style: AppText.ui(24, weight: FontWeight.w800)),
@@ -290,7 +299,7 @@ class _HistoryScreenState extends State<HistoryScreen>
   // ── filter row ────────────────────────────────────────────────────────────
 
   Widget _filterRow() => Padding(
-        padding: const EdgeInsets.fromLTRB(20, 6, 20, 0),
+        padding: const EdgeInsets.fromLTRB(20, 14, 20, 0),
         child: Row(
           children: List.generate(_filters.length, (i) {
             final on = _filterIdx == i;
@@ -436,14 +445,16 @@ class _HistoryScreenState extends State<HistoryScreen>
     if (e.type == SessionType.game && e.gameData != null) {
       screen = GameSessionDetailScreen(entry: e);
     } else if (e.type == SessionType.manual && e.hoopSession != null) {
-      screen = ManualSessionDetailScreen(session: e.hoopSession!);
+      screen = ManualSessionDetailScreen(
+          session: e.hoopSession!, originalSession: e.originalSession);
     } else if (e.hoopSession != null) {
       // Live session — use existing SessionDetailScreen with a completed animation
-      screen = _LiveWrapper(session: e.hoopSession!);
+      screen = _LiveWrapper(
+          session: e.hoopSession!, originalSession: e.originalSession);
     } else {
       return;
     }
-    Navigator.push(context, _slideUp(screen));
+    Navigator.push(context, _slideUp(screen)).then((_) => _loadHistory());
   }
 
   PageRoute _slideUp(Widget page) => PageRouteBuilder(
@@ -464,7 +475,8 @@ class _HistoryScreenState extends State<HistoryScreen>
 
 class _LiveWrapper extends StatefulWidget {
   final HoopSession session;
-  const _LiveWrapper({required this.session});
+  final Session originalSession;
+  const _LiveWrapper({required this.session, required this.originalSession});
   @override
   State<_LiveWrapper> createState() => _LiveWrapperState();
 }
@@ -481,8 +493,10 @@ class _LiveWrapperState extends State<_LiveWrapper>
   }
 
   @override
-  Widget build(BuildContext context) =>
-      SessionDetailScreen(session: widget.session, animation: _c);
+  Widget build(BuildContext context) => SessionDetailScreen(
+      session: widget.session,
+      animation: _c,
+      originalSession: widget.originalSession);
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -513,13 +527,8 @@ class _SessionCardState extends State<_SessionCard>
   @override
   Widget build(BuildContext context) {
     final e = widget.entry;
-    final pctColor = e.pct != null
-        ? (e.pct! >= 0.70
-            ? AppColors.green
-            : e.pct! >= 0.50
-                ? AppColors.gold
-                : AppColors.red)
-        : e.color;
+    final pctColor =
+        e.pct != null ? PerformanceGuide.colorFor(e.pct!) : e.color;
 
     return GestureDetector(
       onTapDown: (_) => _press.forward(),
@@ -565,32 +574,17 @@ class _SessionCardState extends State<_SessionCard>
                             _TypeBadge(e.type),
                           ]),
                           Text(e.subtitle,
-                              style: AppText.ui(11, color: AppColors.text3),
+                              style: AppText.ui(12, color: AppColors.text2),
                               overflow: TextOverflow.ellipsis),
                         ])),
                     const SizedBox(width: 10),
                     // Right stats
                     Column(
                         crossAxisAlignment: CrossAxisAlignment.end,
+                        mainAxisAlignment: MainAxisAlignment.center,
                         children: [
                           Text(e.pctStr,
-                              style: AppText.display(22, color: pctColor)),
-                          if (e.made != null && e.attempts != null)
-                            Text('${e.made}/${e.attempts}',
-                                style: AppText.ui(10, color: AppColors.text3)),
-                          const SizedBox(height: 5),
-                          if (e.elapsed.inSeconds > 0)
-                            Row(children: [
-                              const Icon(Icons.timer_outlined,
-                                  size: 10, color: AppColors.text3),
-                              const SizedBox(width: 3),
-                              Text(e.timeStr,
-                                  style:
-                                      AppText.ui(10, color: AppColors.text3)),
-                            ])
-                          else
-                            const Icon(Icons.chevron_right_rounded,
-                                size: 16, color: AppColors.text3),
+                              style: AppText.display(24, color: pctColor)),
                         ]),
                   ]),
                 ),
@@ -618,7 +612,7 @@ class _TypeBadge extends StatelessWidget {
             borderRadius: BorderRadius.circular(4),
             border: Border.all(color: color.withValues(alpha: 0.25))),
         child: Text(label,
-            style: AppText.ui(8,
+            style: AppText.ui(10,
                 weight: FontWeight.w800, color: color, letterSpacing: 0.6)));
   }
 }

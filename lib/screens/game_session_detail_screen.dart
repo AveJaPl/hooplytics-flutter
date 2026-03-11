@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../main.dart';
 import 'history_screen.dart';
+import '../services/session_service.dart';
 
 // ═════════════════════════════════════════════════════════════════════════════
 //  GAME SESSION DETAIL SCREEN
@@ -55,6 +56,64 @@ class _State extends State<GameSessionDetailScreen>
     return 'D';
   }
 
+  Future<void> _deleteSession() async {
+    final confirmed = await _showDeleteConfirm();
+    if (confirmed != true) return;
+
+    try {
+      await SessionService().deleteSession(e.originalSession.id!);
+      if (mounted) {
+        Navigator.pop(context);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Session deleted', style: AppText.ui(13)),
+            backgroundColor: AppColors.surface,
+            behavior: SnackBarBehavior.floating,
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e'), backgroundColor: AppColors.red),
+        );
+      }
+    }
+  }
+
+  Future<bool?> _showDeleteConfirm() async {
+    HapticFeedback.vibrate();
+    return showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.surface,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Text('Delete Session?',
+            style: AppText.ui(18, weight: FontWeight.w700)),
+        content: Text(
+          'Are you sure you want to delete this session? This cannot be undone.',
+          style: AppText.ui(14, color: AppColors.text2),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text('Cancel',
+                style: AppText.ui(14,
+                    color: AppColors.text3, weight: FontWeight.w600)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text('Delete',
+                style: AppText.ui(14,
+                    color: AppColors.red, weight: FontWeight.w700)),
+          ),
+        ],
+      ),
+    );
+  }
+
   // ── build ─────────────────────────────────────────────────────────────────
 
   @override
@@ -81,12 +140,32 @@ class _State extends State<GameSessionDetailScreen>
                 const SizedBox(height: 24),
                 _shotLogSection(),
               ],
+              const SizedBox(height: 48),
+              _deleteButton(),
             ]),
           )),
         ])),
       ),
     );
   }
+
+  Widget _deleteButton() => GestureDetector(
+        onTap: _deleteSession,
+        child: Container(
+          width: double.infinity,
+          height: 56,
+          decoration: BoxDecoration(
+            color: AppColors.red.withValues(alpha: 0.10),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: AppColors.red.withValues(alpha: 0.25)),
+          ),
+          child: Center(
+            child: Text('Delete Session',
+                style: AppText.ui(14,
+                    weight: FontWeight.w700, color: AppColors.red)),
+          ),
+        ),
+      );
 
   // ══════════════════════════════════════════════════════════════════════════
   //  TOP BAR
@@ -116,10 +195,10 @@ class _State extends State<GameSessionDetailScreen>
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                 Text('GAME SESSION',
-                    style: AppText.ui(9,
-                        color: AppColors.text3,
-                        letterSpacing: 1.8,
-                        weight: FontWeight.w700)),
+                    style: AppText.ui(11,
+                        color: AppColors.text2,
+                        letterSpacing: 1.4,
+                        weight: FontWeight.w800)),
                 Text(e.title, style: AppText.ui(15, weight: FontWeight.w700)),
               ])),
           // Badge uses e.color — consistent with session type
@@ -130,7 +209,7 @@ class _State extends State<GameSessionDetailScreen>
                 borderRadius: BorderRadius.circular(8),
                 border: Border.all(color: e.color.withValues(alpha: 0.30))),
             child: Text('GAME',
-                style: AppText.ui(9, weight: FontWeight.w800, color: e.color)),
+                style: AppText.ui(11, weight: FontWeight.w800, color: e.color)),
           ),
         ]),
       );
@@ -466,7 +545,7 @@ class _State extends State<GameSessionDetailScreen>
                 style: AppText.ui(14, color: AppColors.text2)),
             const SizedBox(height: 10),
             Text('$rounds rounds played',
-                style: AppText.ui(12, color: AppColors.text3)),
+                style: AppText.ui(12, color: AppColors.text2)),
           ])),
       const SizedBox(height: 16),
       _label('LETTERS'),
@@ -496,7 +575,8 @@ class _State extends State<GameSessionDetailScreen>
                                               .withValues(alpha: 0.18)))))),
                   const SizedBox(height: 6),
                   Text('$p1l / 5 letters',
-                      style: AppText.ui(10, color: AppColors.text3)),
+                      style: AppText.ui(12,
+                          color: AppColors.text2, weight: FontWeight.w600)),
                 ]))),
         const SizedBox(width: 12),
         // P2 = neutral (opponent), earned letters in text2
@@ -1024,10 +1104,10 @@ class _State extends State<GameSessionDetailScreen>
         padding: const EdgeInsets.only(bottom: 10),
         child: Row(children: [
           Text(t,
-              style: AppText.ui(9,
-                  color: AppColors.text3,
-                  letterSpacing: 1.6,
-                  weight: FontWeight.w700)),
+              style: AppText.ui(11,
+                  color: AppColors.text2,
+                  letterSpacing: 1.4,
+                  weight: FontWeight.w800)),
           const SizedBox(width: 10),
           Expanded(child: Container(height: 1, color: AppColors.borderSub)),
         ]),
@@ -1045,7 +1125,7 @@ class _State extends State<GameSessionDetailScreen>
           border: Border.all(color: AppColors.border),
           borderRadius: BorderRadius.circular(7)),
       child: Row(mainAxisSize: MainAxisSize.min, children: [
-        Icon(icon, size: 11, color: AppColors.text3),
+        Icon(icon, size: 12, color: AppColors.text2),
         const SizedBox(width: 5),
         Text(label, style: AppText.ui(11, color: AppColors.text2)),
       ]));
@@ -1053,7 +1133,10 @@ class _State extends State<GameSessionDetailScreen>
   Widget _bigStat(String v, String l, Color c) => Column(children: [
         Text(v, style: AppText.ui(22, weight: FontWeight.w800, color: c)),
         Text(l,
-            style: AppText.ui(9, color: AppColors.text3, letterSpacing: 1.0)),
+            style: AppText.ui(11,
+                color: AppColors.text2,
+                letterSpacing: 0.5,
+                weight: FontWeight.w700)),
       ]);
 
   Widget _vDiv() => Container(width: 1, height: 36, color: AppColors.borderSub);
@@ -1082,7 +1165,7 @@ class _State extends State<GameSessionDetailScreen>
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
       decoration: _box(),
       child: Row(children: [
-        Icon(icon, size: 15, color: AppColors.text3),
+        Icon(icon, size: 15, color: AppColors.text2),
         const SizedBox(width: 10),
         Text(label, style: AppText.ui(13, color: AppColors.text2)),
         const Spacer(),
@@ -1102,7 +1185,9 @@ class _State extends State<GameSessionDetailScreen>
                 child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                  Text(l1, style: AppText.ui(10, color: AppColors.text3)),
+                  Text(l1,
+                      style: AppText.ui(12,
+                          color: AppColors.text2, weight: FontWeight.w700)),
                   const SizedBox(height: 4),
                   Text(v1,
                       style: AppText.ui(18,
@@ -1117,7 +1202,9 @@ class _State extends State<GameSessionDetailScreen>
                 child: Column(
                     crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
-                  Text(l2, style: AppText.ui(10, color: AppColors.text3)),
+                  Text(l2,
+                      style: AppText.ui(12,
+                          color: AppColors.text2, weight: FontWeight.w700)),
                   const SizedBox(height: 4),
                   Text(v2,
                       style: AppText.ui(18,

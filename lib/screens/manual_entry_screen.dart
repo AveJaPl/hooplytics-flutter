@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../main.dart';
-import 'session_setup_screen.dart';
+import '../widgets/basketball_court_map.dart';
 import '../models/session.dart';
 import '../models/shot.dart';
 import '../services/session_service.dart';
@@ -14,7 +14,8 @@ import 'package:supabase_flutter/supabase_flutter.dart' hide Session;
 // ═════════════════════════════════════════════════════════════════════════════
 
 class ManualEntryScreen extends StatefulWidget {
-  const ManualEntryScreen({super.key});
+  final Session? initialSession;
+  const ManualEntryScreen({super.key, this.initialSession});
   @override
   State<ManualEntryScreen> createState() => _ManualEntryScreenState();
 }
@@ -26,7 +27,20 @@ class _ManualEntryScreenState extends State<ManualEntryScreen>
   String _selectedId = 'free_throw';
   int _made = 0;
   int _swishes = 0;
-  int _attempts = 0;
+  int _misses = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.initialSession != null) {
+      final s = widget.initialSession!;
+      _positionMode = s.mode == 'position';
+      _selectedId = s.selectionId;
+      _made = s.made;
+      _swishes = s.swishes;
+      _misses = s.attempts - s.made;
+    }
+  }
 
   static const _zones = [
     RangeZone('layup', 'Layup', 0),
@@ -89,8 +103,9 @@ class _ManualEntryScreenState extends State<ManualEntryScreen>
       ]).animate(CurvedAnimation(parent: c, curve: Curves.easeOut));
 
   // ── computed ──────────────────────────────────────────────────────────────
-  double get _pct => _attempts == 0 ? 0 : _made / _attempts;
-  int get _missed => _attempts - _made;
+  int get _totalMade => _made + _swishes;
+  int get _attempts => _totalMade + _misses;
+  double get _pct => _attempts == 0 ? 0 : _totalMade / _attempts;
   String get _pctStr => _attempts == 0 ? '—' : '${(_pct * 100).round()}%';
 
   Color get _pctColor {
@@ -98,15 +113,6 @@ class _ManualEntryScreenState extends State<ManualEntryScreen>
     if (_pct >= 0.70) return AppColors.green;
     if (_pct >= 0.50) return AppColors.gold;
     return AppColors.red;
-  }
-
-  String get _grade {
-    if (_attempts == 0) return '·';
-    if (_pct >= 0.85) return 'S';
-    if (_pct >= 0.75) return 'A';
-    if (_pct >= 0.65) return 'B';
-    if (_pct >= 0.50) return 'C';
-    return 'D';
   }
 
   String get _selectedLabel {
@@ -122,27 +128,23 @@ class _ManualEntryScreenState extends State<ManualEntryScreen>
     final v = (_made + d).clamp(0, 9999);
     if (v == _made) return;
     HapticFeedback.selectionClick();
-    setState(() {
-      _made = v;
-      if (_made > _attempts) _attempts = _made;
-      if (_swishes > _made) _swishes = _made;
-    });
+    setState(() => _made = v);
     _madeBounce.forward(from: 0);
   }
 
   void _bumpSwishes(int d) {
-    final v = (_swishes + d).clamp(0, _made); // Cannot exceed made shots
+    final v = (_swishes + d).clamp(0, 9999);
     if (v == _swishes) return;
     HapticFeedback.selectionClick();
     setState(() => _swishes = v);
     _swishBounce.forward(from: 0);
   }
 
-  void _bumpAttempts(int d) {
-    final v = (_attempts + d).clamp(_made, 9999);
-    if (v == _attempts) return;
+  void _bumpMisses(int d) {
+    final v = (_misses + d).clamp(0, 9999);
+    if (v == _misses) return;
     HapticFeedback.selectionClick();
-    setState(() => _attempts = v);
+    setState(() => _misses = v);
     _attBounce.forward(from: 0);
   }
 
@@ -164,53 +166,57 @@ class _ManualEntryScreenState extends State<ManualEntryScreen>
       final user = Supabase.instance.client.auth.currentUser;
       if (user == null) throw Exception('User not logged in');
 
-      // Create dummy manual session
       final session = Session(
+        id: widget.initialSession?.id,
         userId: user.id,
         type: 'manual',
         mode: _positionMode ? 'position' : 'range',
         selectionId: _selectedId,
         selectionLabel: _selectedLabel,
         targetShots: _attempts,
-        made: _made,
+        made: _totalMade,
         swishes: _swishes,
         attempts: _attempts,
-        bestStreak: 0, // Not tracked in manual
+        bestStreak: 0,
         elapsedSeconds: 0,
+        createdAt: widget.initialSession?.createdAt,
       );
 
-      // Create sequence of mock Shots based on counts
-      // Order: Swishes (makes), Regular Makes, Misses
       final shots = <Shot>[];
       int idx = 0;
 
       for (int i = 0; i < _swishes; i++) {
         shots.add(Shot(
-            sessionId: '',
+            sessionId: session.id ?? '',
             userId: user.id,
             orderIdx: idx++,
             isMake: true,
             isSwish: true));
       }
-      for (int i = 0; i < (_made - _swishes); i++) {
+      for (int i = 0; i < _made; i++) {
         shots.add(Shot(
-            sessionId: '',
+            sessionId: session.id ?? '',
             userId: user.id,
             orderIdx: idx++,
             isMake: true,
             isSwish: false));
       }
-      for (int i = 0; i < _missed; i++) {
+      for (int i = 0; i < _misses; i++) {
         shots.add(Shot(
-            sessionId: '',
+            sessionId: session.id ?? '',
             userId: user.id,
             orderIdx: idx++,
             isMake: false,
             isSwish: false));
       }
 
-      await SessionService().saveSessionData(session, shots);
-      if (mounted) Navigator.of(context).pop();
+      if (widget.initialSession != null) {
+        await SessionService().updateManualSession(session, shots);
+      } else {
+        await SessionService().saveSessionData(session, shots);
+      }
+
+      if (mounted) Navigator.of(context).pop(true);
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -242,13 +248,13 @@ class _ManualEntryScreenState extends State<ManualEntryScreen>
             _header(),
             const SizedBox(height: 14),
 
+            // ── mode toggle + selected hint ─────────────────────────────────
+            _modeRow(),
+            const SizedBox(height: 14),
+
             // ── live stats strip ────────────────────────────────────────────
             _statsStrip(),
             const SizedBox(height: 14),
-
-            // ── mode toggle + selected hint ─────────────────────────────────
-            _modeRow(),
-            const SizedBox(height: 10),
 
             // ── court (fixed height, always visible) ────────────────────────
             _court(),
@@ -256,8 +262,7 @@ class _ManualEntryScreenState extends State<ManualEntryScreen>
 
             // ── counters ────────────────────────────────────────────────────
             _counters(),
-
-            const Spacer(),
+            const SizedBox(height: 16),
 
             // ── save button ─────────────────────────────────────────────────
             _saveBar(),
@@ -275,19 +280,17 @@ class _ManualEntryScreenState extends State<ManualEntryScreen>
           _IconBtn(
               icon: Icons.close_rounded,
               onTap: () => Navigator.of(context).pop()),
-          const Spacer(),
-          Column(children: [
+          const SizedBox(width: 14),
+          Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Text('MANUAL ENTRY',
-                style: AppText.ui(9,
-                    color: AppColors.text3,
-                    letterSpacing: 1.8,
-                    weight: FontWeight.w700)),
+                style: AppText.ui(11,
+                    color: AppColors.text2,
+                    letterSpacing: 1.4,
+                    weight: FontWeight.w800)),
             const SizedBox(height: 2),
             Text('Log a past session',
                 style: AppText.ui(15, weight: FontWeight.w700)),
           ]),
-          const Spacer(),
-          const SizedBox(width: 38), // balance
         ]),
       );
 
@@ -296,180 +299,174 @@ class _ManualEntryScreenState extends State<ManualEntryScreen>
   Widget _statsStrip() => Padding(
         padding: const EdgeInsets.symmetric(horizontal: 20),
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          width: double.infinity,
+          padding: const EdgeInsets.all(24),
           decoration: BoxDecoration(
             color: AppColors.surface,
+            borderRadius: BorderRadius.circular(24),
             border: Border.all(color: AppColors.border),
-            borderRadius: BorderRadius.circular(14),
-          ),
-          child: Row(children: [
-            // Accuracy
-            Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text('ACCURACY',
-                  style: AppText.ui(8,
-                      color: AppColors.text3,
-                      letterSpacing: 1.4,
-                      weight: FontWeight.w700)),
-              const SizedBox(height: 3),
-              Text(_pctStr, style: AppText.display(28, color: _pctColor)),
-            ]),
-            const SizedBox(width: 16),
-            // Progress bar
-            Expanded(
-              child: Column(children: [
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(3),
-                  child: LinearProgressIndicator(
-                    value: _pct,
-                    backgroundColor: AppColors.borderSub,
-                    valueColor: AlwaysStoppedAnimation(_pctColor),
-                    minHeight: 4,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Row(children: [
-                  _Strip('${_made}M', AppColors.green),
-                  const SizedBox(width: 8),
-                  _Strip('${_swishes}S', AppColors.gold),
-                  const SizedBox(width: 8),
-                  _Strip('${_missed}X', AppColors.red),
-                ]),
-              ]),
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                AppColors.surface,
+                AppColors.surface.withValues(alpha: 0.7),
+              ],
             ),
-            const SizedBox(width: 14),
-            // Grade badge
-            Container(
-              width: 42,
-              height: 42,
-              decoration: BoxDecoration(
-                color: _pctColor.withValues(alpha: 0.10),
-                border: Border.all(
-                    color: _pctColor.withValues(alpha: 0.32), width: 1.2),
-                borderRadius: BorderRadius.circular(10),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.2),
+                blurRadius: 20,
+                offset: const Offset(0, 10),
               ),
-              child: Center(
-                  child: Text(_grade,
-                      style: AppText.display(22, color: _pctColor))),
-            ),
-          ]),
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Flexible(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('CURRENT ZONE',
+                            style: AppText.ui(10,
+                                color: AppColors.gold,
+                                letterSpacing: 2.0,
+                                weight: FontWeight.w700)),
+                        const SizedBox(height: 4),
+                        FittedBox(
+                          fit: BoxFit.scaleDown,
+                          child: Text(
+                              _selectedLabel.isEmpty ? '—' : _selectedLabel,
+                              style:
+                                  AppText.display(28, color: AppColors.text1)),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  _gradeBadge(_pct),
+                ],
+              ),
+              const SizedBox(height: 24),
+              FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Row(
+                  children: [
+                    _statItem('ACCURACY', _pctStr, _pctColor),
+                    const SizedBox(width: 32),
+                    _statItem('MAKES', '$_totalMade', AppColors.text1),
+                    const SizedBox(width: 32),
+                    _statItem('MISSES', '$_misses', AppColors.text2),
+                  ],
+                ),
+              ),
+            ],
+          ),
         ),
       );
+
+  Widget _gradeBadge(double pct) {
+    String grade = 'D';
+    Color color = AppColors.red;
+
+    if (_attempts == 0) {
+      grade = '·';
+      color = AppColors.text3;
+    } else if (pct >= 0.85) {
+      grade = 'A+';
+      color = AppColors.green;
+    } else if (pct >= 0.75) {
+      grade = 'A';
+      color = AppColors.green;
+    } else if (pct >= 0.65) {
+      grade = 'B';
+      color = AppColors.gold;
+    } else if (pct >= 0.55) {
+      grade = 'C';
+      color = AppColors.gold;
+    }
+
+    return Container(
+      width: 54,
+      height: 54,
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.1),
+        shape: BoxShape.circle,
+        border: Border.all(color: color.withValues(alpha: 0.3), width: 2),
+      ),
+      child: Center(
+        child: Text(grade, style: AppText.display(24, color: color)),
+      ),
+    );
+  }
+
+  Widget _statItem(String label, String value, Color color) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label,
+            style: AppText.ui(9, color: AppColors.text3, letterSpacing: 1.0)),
+        const SizedBox(height: 2),
+        Text(value, style: AppText.display(24, color: color)),
+      ],
+    );
+  }
 
   // ── mode row ──────────────────────────────────────────────────────────────
 
   Widget _modeRow() => Padding(
         padding: const EdgeInsets.symmetric(horizontal: 20),
-        child: Row(children: [
-          // Toggle (Position / Range)
-          Container(
-            height: 36,
-            padding: const EdgeInsets.all(3),
-            decoration: BoxDecoration(
-              color: AppColors.surface,
-              border: Border.all(color: AppColors.border),
-              borderRadius: BorderRadius.circular(9),
-            ),
-            child: Row(children: [
-              _ModeTab('Position', _positionMode, () {
-                HapticFeedback.selectionClick();
-                setState(() {
-                  _positionMode = true;
-                  _selectedId = 'free_throw';
-                });
-              }),
-              _ModeTab('Range', !_positionMode, () {
-                HapticFeedback.selectionClick();
-                setState(() {
-                  _positionMode = false;
-                  _selectedId = 'mid';
-                });
-              }),
-            ]),
+        child: Container(
+          height: 42,
+          padding: const EdgeInsets.all(3),
+          decoration: BoxDecoration(
+            color: AppColors.surface,
+            border: Border.all(color: AppColors.border),
+            borderRadius: BorderRadius.circular(11),
           ),
-          const SizedBox(width: 12),
-          // Selected hint
-          Expanded(
-            child: AnimatedSwitcher(
-              duration: const Duration(milliseconds: 180),
-              child: _selectedId.isEmpty
-                  ? const SizedBox.shrink()
-                  : Row(key: ValueKey(_selectedId), children: [
-                      Container(
-                          width: 6,
-                          height: 6,
-                          decoration: const BoxDecoration(
-                              shape: BoxShape.circle, color: AppColors.gold)),
-                      const SizedBox(width: 7),
-                      Expanded(
-                        child: Text(
-                          _selectedLabel,
-                          style: AppText.ui(12,
-                              weight: FontWeight.w700, color: AppColors.gold),
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                    ]),
-            ),
-          ),
-        ]),
+          child: Row(children: [
+            _ModeTab('Position', _positionMode, () {
+              HapticFeedback.selectionClick();
+              setState(() {
+                _positionMode = true;
+                _selectedId = 'free_throw';
+              });
+            }),
+            _ModeTab('Range', !_positionMode, () {
+              HapticFeedback.selectionClick();
+              setState(() {
+                _positionMode = false;
+                _selectedId = 'mid';
+              });
+            }),
+          ]),
+        ),
       );
 
   // ── court ─────────────────────────────────────────────────────────────────
 
   Widget _court() => Padding(
         padding: const EdgeInsets.symmetric(horizontal: 20),
-        child: AspectRatio(
-          aspectRatio: 1.05,
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(16),
-            child: LayoutBuilder(builder: (_, c) {
-              final geo = CourtGeo(c.maxWidth, c.maxHeight);
-              return Stack(clipBehavior: Clip.none, children: [
-                Positioned.fill(
-                    child: CustomPaint(painter: CourtLinePainter(geo))),
-                if (!_positionMode)
-                  Positioned.fill(
-                      child: CustomPaint(
-                          painter: RangeZonePainter(geo, _selectedId, _zones))),
-                if (_positionMode)
-                  ..._spotWidgets(geo)
-                else
-                  _rangeTapLayer(geo),
-              ]);
-            }),
-          ),
-        ),
-      );
-
-  List<Widget> _spotWidgets(CourtGeo geo) => geo.spots.map((s) {
-        final px = (s.fx * geo.w).clamp(0.0, geo.w);
-        final py = (s.fy * geo.h).clamp(0.0, geo.h);
-        return Positioned(
-          left: px - 28,
-          top: py - 28,
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: () {
-              HapticFeedback.selectionClick();
-              setState(() => _selectedId = s.id);
-            },
-            child:
-                CourtSpotWidget(selected: _selectedId == s.id, label: s.label),
-          ),
-        );
-      }).toList();
-
-  Widget _rangeTapLayer(CourtGeo geo) => Positioned.fill(
-        child: GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTapUp: (d) {
-            final id = RangeZonePainter.getZoneAt(geo, d.localPosition);
-            if (id != null) {
-              HapticFeedback.selectionClick();
-              setState(() => _selectedId = id);
-            }
+        child: BasketballCourtMap(
+          mode: _positionMode ? CourtMapMode.setup : CourtMapMode.range,
+          selectedId: _selectedId,
+          onSpotTap: (id) {
+            HapticFeedback.selectionClick();
+            setState(() {
+              _selectedId = id;
+            });
           },
-          child: const SizedBox.expand(),
+          spots: _positionMode
+              ? _spotIds
+                  .map((id) => MapSpotData(
+                      id: id, label: _spotLabels[_spotIds.indexOf(id)]))
+                  .toList()
+              : const [],
+          zones: _zones.map((z) => RangeZone(z.id, z.label, z.tier)).toList(),
         ),
       );
 
@@ -505,14 +502,14 @@ class _ManualEntryScreenState extends State<ManualEntryScreen>
           const SizedBox(width: 8),
           Expanded(
               child: _CounterCard(
-            label: 'ATTEMPT',
-            value: _attempts,
+            label: 'MISSES',
+            value: _misses,
             scaleAnim: _attScale,
-            color: AppColors.text1,
-            onDec: () => _bumpAttempts(-1),
-            onInc: () => _bumpAttempts(1),
-            onDecLong: () => _bumpAttempts(-5),
-            onIncLong: () => _bumpAttempts(5),
+            color: AppColors.red,
+            onDec: () => _bumpMisses(-1),
+            onInc: () => _bumpMisses(1),
+            onDecLong: () => _bumpMisses(-5),
+            onIncLong: () => _bumpMisses(5),
           )),
         ]),
       );
@@ -527,52 +524,32 @@ class _ManualEntryScreenState extends State<ManualEntryScreen>
         color: AppColors.bg,
         border: Border(top: BorderSide(color: AppColors.border)),
       ),
-      child: Row(children: [
-        // Quick summary
-        if (ok) ...[
-          Expanded(
-            child:
-                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(_selectedLabel.isEmpty ? '—' : _selectedLabel,
-                  style: AppText.ui(13, weight: FontWeight.w700),
-                  overflow: TextOverflow.ellipsis),
-              const SizedBox(height: 2),
-              Text('$_made made · $_attempts attempts · $_pctStr',
-                  style: AppText.ui(11, color: AppColors.text3)),
-            ]),
+      child: GestureDetector(
+        onTap: ok ? _save : null,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          height: 50,
+          decoration: BoxDecoration(
+            color: ok ? AppColors.gold : AppColors.surface,
+            border: Border.all(color: ok ? AppColors.gold : AppColors.border),
+            borderRadius: BorderRadius.circular(13),
+            boxShadow: ok
+                ? [
+                    BoxShadow(
+                        color: AppColors.gold.withValues(alpha: 0.22),
+                        blurRadius: 14,
+                        offset: const Offset(0, 4))
+                  ]
+                : null,
           ),
-          const SizedBox(width: 14),
-        ],
-        Expanded(
-          child: GestureDetector(
-            onTap: _save,
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 200),
-              height: 50,
-              decoration: BoxDecoration(
-                color: ok ? AppColors.gold : AppColors.surface,
-                border:
-                    Border.all(color: ok ? AppColors.gold : AppColors.border),
-                borderRadius: BorderRadius.circular(13),
-                boxShadow: ok
-                    ? [
-                        BoxShadow(
-                            color: AppColors.gold.withValues(alpha: 0.22),
-                            blurRadius: 14,
-                            offset: const Offset(0, 4))
-                      ]
-                    : null,
-              ),
-              child: Center(
-                child: Text('Log Session',
-                    style: AppText.ui(14,
-                        weight: FontWeight.w800,
-                        color: ok ? AppColors.bg : AppColors.text3)),
-              ),
-            ),
+          child: Center(
+            child: Text('Save Session',
+                style: AppText.ui(15,
+                    weight: FontWeight.w700,
+                    color: ok ? AppColors.bg : AppColors.text3)),
           ),
         ),
-      ]),
+      ),
     );
   }
 }
@@ -623,7 +600,8 @@ class _CounterCard extends StatelessWidget {
             icon: Icons.remove_rounded,
             onTap: onDec,
             onLong: onDecLong,
-            color: color.withValues(alpha: 0.55),
+            color: AppColors.bg,
+            backgroundColor: color.withValues(alpha: 0.8),
             size: 28,
           ),
           const SizedBox(width: 6),
@@ -646,7 +624,8 @@ class _CounterCard extends StatelessWidget {
             icon: Icons.add_rounded,
             onTap: onInc,
             onLong: onIncLong,
-            color: color,
+            color: AppColors.bg,
+            backgroundColor: color,
             filled: true,
             size: 28,
           ),
@@ -666,6 +645,7 @@ class _RoundBtn extends StatefulWidget {
   final IconData icon;
   final VoidCallback onTap, onLong;
   final Color color;
+  final Color? backgroundColor;
   final bool filled;
   final double size;
   const _RoundBtn({
@@ -673,6 +653,7 @@ class _RoundBtn extends StatefulWidget {
     required this.onTap,
     required this.onLong,
     required this.color,
+    this.backgroundColor,
     this.filled = false,
     this.size = 36,
   });
@@ -715,15 +696,18 @@ class _RoundBtnState extends State<_RoundBtn>
             height: widget.size,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
-              color: widget.filled
-                  ? widget.color.withValues(alpha: 0.15)
-                  : AppColors.bg,
-              border: Border.all(
-                color: widget.filled
-                    ? widget.color.withValues(alpha: 0.40)
-                    : AppColors.border,
-                width: 1.2,
-              ),
+              color: widget.backgroundColor ??
+                  (widget.filled
+                      ? widget.color.withValues(alpha: 0.15)
+                      : AppColors.bg),
+              border: widget.backgroundColor != null
+                  ? null
+                  : Border.all(
+                      color: widget.filled
+                          ? widget.color.withValues(alpha: 0.40)
+                          : AppColors.border,
+                      width: 1.2,
+                    ),
             ),
             child: Icon(widget.icon,
                 size: widget.size * 0.61, color: widget.color),
@@ -754,37 +738,29 @@ class _IconBtn extends StatelessWidget {
       );
 }
 
-class _Strip extends StatelessWidget {
-  final String text;
-  final Color color;
-  const _Strip(this.text, this.color);
-  @override
-  Widget build(BuildContext context) => Text(
-        text,
-        style: AppText.ui(11, weight: FontWeight.w700, color: color),
-        overflow: TextOverflow.ellipsis,
-      );
-}
-
 class _ModeTab extends StatelessWidget {
   final String label;
   final bool active;
   final VoidCallback onTap;
   const _ModeTab(this.label, this.active, this.onTap);
   @override
-  Widget build(BuildContext context) => GestureDetector(
-        onTap: onTap,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 170),
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
-          decoration: BoxDecoration(
-            color: active ? AppColors.gold : Colors.transparent,
-            borderRadius: BorderRadius.circular(6),
+  Widget build(BuildContext context) => Expanded(
+        child: GestureDetector(
+          onTap: onTap,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 170),
+            height: double.infinity,
+            decoration: BoxDecoration(
+              color: active ? AppColors.gold : Colors.transparent,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Center(
+              child: Text(label,
+                  style: AppText.ui(13,
+                      weight: FontWeight.w600,
+                      color: active ? AppColors.bg : AppColors.text3)),
+            ),
           ),
-          child: Text(label,
-              style: AppText.ui(12,
-                  weight: FontWeight.w600,
-                  color: active ? AppColors.bg : AppColors.text3)),
         ),
       );
 }

@@ -5,7 +5,7 @@ import '../main.dart';
 import '../models/session.dart';
 import '../models/shot.dart';
 import '../services/session_service.dart';
-
+import '../utils/performance.dart';
 // ═════════════════════════════════════════════════════════════════════════════
 //  SOLO CHALLENGE SCREEN
 //  Handles: beat_the_clock | streak_mode | pressure_fts |
@@ -834,11 +834,7 @@ class _SoloChallengeScreenState extends State<SoloChallengeScreen>
                     decoration: BoxDecoration(
                         shape: BoxShape.circle,
                         color: isDone
-                            ? (pct >= 0.6
-                                    ? AppColors.green
-                                    : pct >= 0.4
-                                        ? AppColors.gold
-                                        : AppColors.red)
+                            ? PerformanceGuide.colorFor(pct)
                                 .withValues(alpha: 0.15)
                             : (isActive
                                 ? widget.color.withValues(alpha: 0.15)
@@ -846,12 +842,7 @@ class _SoloChallengeScreenState extends State<SoloChallengeScreen>
                     child: Center(
                         child: isDone
                             ? Icon(Icons.check_rounded,
-                                size: 14,
-                                color: pct >= 0.6
-                                    ? AppColors.green
-                                    : pct >= 0.4
-                                        ? AppColors.gold
-                                        : AppColors.red)
+                                size: 14, color: PerformanceGuide.colorFor(pct))
                             : Text('${i + 1}',
                                 style: AppText.ui(11,
                                     weight: FontWeight.w700,
@@ -875,11 +866,8 @@ class _SoloChallengeScreenState extends State<SoloChallengeScreen>
                             child: LinearProgressIndicator(
                                 value: pct,
                                 backgroundColor: AppColors.borderSub,
-                                valueColor: AlwaysStoppedAnimation(pct >= 0.6
-                                    ? AppColors.green
-                                    : pct >= 0.4
-                                        ? AppColors.gold
-                                        : AppColors.red),
+                                valueColor: AlwaysStoppedAnimation(
+                                    PerformanceGuide.colorFor(pct)),
                                 minHeight: 3)),
                     ])),
                 const SizedBox(width: 10),
@@ -1150,21 +1138,12 @@ class _SoloResultSheet extends StatelessWidget {
 
   String get _grade {
     if (attempts == 0) return '—';
-    final p = made / attempts;
-    if (p >= 0.85) return 'S';
-    if (p >= 0.75) return 'A';
-    if (p >= 0.65) return 'B';
-    if (p >= 0.50) return 'C';
-    return 'D';
+    return PerformanceGuide.gradeFor(made / attempts);
   }
 
   Color get _gc {
     final p = attempts > 0 ? made / attempts : 0.0;
-    return p >= 0.75
-        ? AppColors.green
-        : p >= 0.50
-            ? AppColors.gold
-            : AppColors.red;
+    return PerformanceGuide.colorFor(p);
   }
 
   @override

@@ -57,10 +57,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
             ),
             const SizedBox(height: 24),
             Text('EDIT PROFILE',
-                style: AppText.ui(12,
-                    color: AppColors.text3,
-                    letterSpacing: 1.5,
-                    weight: FontWeight.w700)),
+                style: AppText.ui(14,
+                    color: AppColors.text2,
+                    letterSpacing: 1.2,
+                    weight: FontWeight.w800)),
             const SizedBox(height: 20),
 
             // Nickname Input
@@ -133,10 +133,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text('WYBIERZ ZDJĘCIE PROFILOWE',
-                style: AppText.ui(12,
-                    color: AppColors.text3,
-                    letterSpacing: 1.5,
-                    weight: FontWeight.w700)),
+                style: AppText.ui(14,
+                    color: AppColors.text2,
+                    letterSpacing: 1.2,
+                    weight: FontWeight.w800)),
             const SizedBox(height: 24),
             GridView.builder(
               shrinkWrap: true,
@@ -201,10 +201,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text('VOICE LANGUAGE',
-                style: AppText.ui(12,
-                    color: AppColors.text3,
-                    letterSpacing: 1.5,
-                    weight: FontWeight.w700)),
+                style: AppText.ui(14,
+                    color: AppColors.text2,
+                    letterSpacing: 1.2,
+                    weight: FontWeight.w800)),
             const SizedBox(height: 20),
             _buildLanguageOption('Polski'),
             _buildLanguageOption('English'),
@@ -322,7 +322,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   Center(
                     child: Text(
                       'Hooplytics v1.0.0',
-                      style: AppText.ui(12, color: AppColors.text3),
+                      style: AppText.ui(13, color: AppColors.text2),
                     ),
                   ),
                   const SizedBox(height: 20),
@@ -341,13 +341,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
     return Padding(
       padding: const EdgeInsets.fromLTRB(24, 20, 24, 0),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Text('ACCOUNT',
-                style: AppText.ui(10,
-                    color: AppColors.text3,
-                    letterSpacing: 1.8,
-                    weight: FontWeight.w700)),
+                style: AppText.ui(11,
+                    color: AppColors.text2,
+                    letterSpacing: 1.4,
+                    weight: FontWeight.w800)),
             const SizedBox(height: 2),
             Text('Profile', style: AppText.ui(24, weight: FontWeight.w800)),
           ]),
@@ -445,7 +446,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       ),
       child: Text(
         'Local Account',
-        style: AppText.ui(11, weight: FontWeight.w600, color: AppColors.text2),
+        style: AppText.ui(12, weight: FontWeight.w700, color: AppColors.text2),
       ),
     );
   }
@@ -526,10 +527,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
       padding: const EdgeInsets.only(bottom: 12, left: 4),
       child: Text(
         title,
-        style: AppText.ui(11,
-            color: AppColors.text3,
-            letterSpacing: 1.5,
-            weight: FontWeight.w700),
+        style: AppText.ui(12,
+            color: AppColors.text2,
+            letterSpacing: 1.2,
+            weight: FontWeight.w800),
       ),
     );
   }
@@ -580,7 +581,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
             if (value != null)
               Text(
                 value,
-                style: AppText.ui(14, color: AppColors.text3),
+                style: AppText.ui(14, color: AppColors.text2),
               ),
             if (isToggle)
               SizedBox(
@@ -694,7 +695,7 @@ class _SubscriptionPortal extends StatelessWidget {
                   AppText.ui(24, weight: FontWeight.w800, color: Colors.white)),
           const SizedBox(height: 12),
           Text('Master your shots with advanced features',
-              style: AppText.ui(14, color: AppColors.text3)),
+              style: AppText.ui(14, color: AppColors.text2)),
           const SizedBox(height: 40),
           _featureRow(Icons.cloud_sync_rounded, 'Full Cloud Sync (Supabase)'),
           _featureRow(Icons.analytics_outlined, 'Advanced Shooting Heatmaps'),
@@ -720,7 +721,7 @@ class _SubscriptionPortal extends StatelessWidget {
           TextButton(
               onPressed: () => Navigator.pop(context),
               child: Text('Maybe later',
-                  style: AppText.ui(14, color: AppColors.text3))),
+                  style: AppText.ui(14, color: AppColors.text2))),
           const SizedBox(height: 10),
         ],
       ),

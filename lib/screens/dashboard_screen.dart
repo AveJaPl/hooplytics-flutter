@@ -27,7 +27,8 @@ class _DashboardScreenState extends State<DashboardScreen>
 
   final _authService = AuthService();
   final _sessionService = SessionService();
-  Future<Map<String, dynamic>>? _statsFuture;
+  int _chartPeriod = 0; // 0 = 7D, 1 = 6M
+  late Future<Map<String, dynamic>> _statsFuture;
 
   @override
   void initState() {
@@ -158,15 +159,27 @@ class _DashboardScreenState extends State<DashboardScreen>
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       const SizedBox(height: 28),
-                      _buildHeroCard(d),
-                      const SizedBox(height: 28),
-                      _buildSectionLabel('THIS WEEK', padding: true),
-                      const SizedBox(height: 14),
-                      _buildWeekChart(d),
-                      const SizedBox(height: 28),
                       _buildSectionLabel('QUICK START', padding: true),
                       const SizedBox(height: 14),
                       _buildQuickStart(),
+                      const SizedBox(height: 28),
+                      _buildSectionLabel('TREND', padding: true),
+                      const SizedBox(height: 14),
+                      _trendChart(
+                        List<double>.from(d['weekPct'] ?? []),
+                        List<String>.from(d['weekLabels'] ?? []),
+                        List<double>.from(d['monthPct'] ?? []),
+                        List<String>.from(d['monthLabels'] ?? []),
+                      ),
+                      const SizedBox(height: 28),
+                      _buildSectionLabel('CONSISTENCY', padding: true),
+                      const SizedBox(height: 14),
+                      _calendarHeatmap(
+                        (d['calendarData'] as List? ?? [])
+                            .map((row) => List<double>.from(row as List))
+                            .toList(),
+                        (d['consistencyScore'] ?? 0.0).toDouble(),
+                      ),
                       const SizedBox(height: 28),
                     ],
                   ),
@@ -187,6 +200,7 @@ class _DashboardScreenState extends State<DashboardScreen>
       child: Padding(
         padding: const EdgeInsets.fromLTRB(24, 20, 24, 0),
         child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
           children: [
             Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -194,10 +208,10 @@ class _DashboardScreenState extends State<DashboardScreen>
                 Text(
                   'GOOD EVENING',
                   style: AppText.ui(
-                    10,
-                    color: AppColors.text3,
-                    letterSpacing: 1.8,
-                    weight: FontWeight.w700,
+                    11,
+                    color: AppColors.text2,
+                    letterSpacing: 1.4,
+                    weight: FontWeight.w800,
                   ),
                 ),
                 const SizedBox(height: 2),
@@ -246,161 +260,6 @@ class _DashboardScreenState extends State<DashboardScreen>
   }
 
   // ── Hero Card ───────────────────────────────────────────────────────────────
-
-  Widget _buildHeroCard(Map<String, dynamic> d) {
-    final made = d['totalMade'] as int? ?? 0;
-    final atts = d['totalAttempts'] as int? ?? 0;
-    final totalSessions = d['totalSessions'] as int? ?? 0;
-    final pct = atts > 0 ? made / atts : 0.0;
-    final pctInt = (pct * 100).round();
-
-    final zones = d['zones'] as List<Map<String, dynamic>>? ?? [];
-    String bestZone = 'N/A';
-    if (zones.isNotEmpty) {
-      zones.sort((a, b) {
-        final double pA = a['pct'] as double;
-        final double pB = b['pct'] as double;
-        return pB.compareTo(pA);
-      });
-      bestZone = zones.first['label'] as String;
-    }
-
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 24),
-      child: Container(
-        padding: const EdgeInsets.all(24),
-        decoration: BoxDecoration(
-          color: AppColors.surface,
-          border: Border.all(color: AppColors.border),
-          borderRadius: BorderRadius.circular(20),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'SHOOTING %',
-                        style: AppText.ui(
-                          10,
-                          color: AppColors.text3,
-                          letterSpacing: 1.8,
-                          weight: FontWeight.w600,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        children: [
-                          Text(
-                            '$pctInt',
-                            style: AppText.display(72, color: AppColors.text1),
-                          ),
-                          Padding(
-                            padding: const EdgeInsets.only(bottom: 12, left: 2),
-                            child: Text(
-                              '%',
-                              style: AppText.display(28, color: AppColors.gold),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 6),
-                      Row(
-                        children: [
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 8,
-                              vertical: 3,
-                            ),
-                            decoration: BoxDecoration(
-                              color: AppColors.greenSoft,
-                              borderRadius: BorderRadius.circular(6),
-                            ),
-                            child: Text(
-                              '↑ 4.2%',
-                              style: AppText.ui(
-                                11,
-                                weight: FontWeight.w700,
-                                color: AppColors.green,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Text(
-                            'vs last week',
-                            style: AppText.ui(12, color: AppColors.text3),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-                _RingChart(value: pct, size: 84),
-              ],
-            ),
-            const SizedBox(height: 24),
-            Container(height: 1, color: AppColors.borderSub),
-            const SizedBox(height: 20),
-            const SizedBox(height: 20),
-            Row(
-              children: [
-                _StatTile(
-                    label: 'MADE', value: '$made', color: AppColors.text1),
-                const _StatTileDivider(),
-                _StatTile(
-                  label: 'ATTEMPTS',
-                  value: '$atts',
-                  color: AppColors.text1,
-                ),
-                const _StatTileDivider(),
-                _StatTile(
-                    label: 'SESSIONS',
-                    value: '$totalSessions',
-                    color: AppColors.gold),
-                const _StatTileDivider(),
-                _StatTile(
-                  label: 'BEST ZONE',
-                  value: bestZone,
-                  color: AppColors.green,
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // ── Week Chart ──────────────────────────────────────────────────────────────
-
-  Widget _buildWeekChart(Map<String, dynamic> d) {
-    final weekPct = d['weekPct'] as List<double>? ?? List.filled(7, 0.0);
-    final weekLabels =
-        d['weekLabels'] as List<String>? ?? ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
-
-    final displayData =
-        weekPct.map((e) => e * 100).toList(); // Convert to percentages
-
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 24),
-      child: Container(
-        height: 150,
-        padding: const EdgeInsets.fromLTRB(16, 20, 16, 12),
-        decoration: BoxDecoration(
-          color: AppColors.surface,
-          border: Border.all(color: AppColors.border),
-          borderRadius: BorderRadius.circular(20),
-        ),
-        child: _BarChart(data: displayData, labels: weekLabels),
-      ),
-    );
-  }
 
   // ── Quick Start ──────────────────────────────────────────────────────────────
 
@@ -488,15 +347,15 @@ class _DashboardScreenState extends State<DashboardScreen>
                   Icon(
                     active ? items[i].activeIcon : items[i].icon,
                     size: 22,
-                    color: active ? AppColors.gold : AppColors.text3,
+                    color: active ? AppColors.gold : AppColors.text2,
                   ),
                   const SizedBox(height: 5),
                   Text(
                     items[i].label,
                     style: AppText.ui(
-                      10,
+                      12,
                       weight: active ? FontWeight.w600 : FontWeight.w400,
-                      color: active ? AppColors.gold : AppColors.text3,
+                      color: active ? AppColors.gold : AppColors.text2,
                     ),
                   ),
                 ],
@@ -520,10 +379,10 @@ class _DashboardScreenState extends State<DashboardScreen>
         Text(
           label,
           style: AppText.ui(
-            10,
-            weight: FontWeight.w700,
-            color: AppColors.text3,
-            letterSpacing: 1.6,
+            11,
+            weight: FontWeight.w800,
+            color: AppColors.text2,
+            letterSpacing: 1.4,
           ),
         ),
         if (header) ...[
@@ -547,159 +406,335 @@ class _DashboardScreenState extends State<DashboardScreen>
     }
     return content;
   }
+
+  // ── Trend Chart ─────────────────────────────────────────────────────────────
+
+  Widget _trendChart(List<double> weekPct, List<String> weekLabels,
+      List<double> monthPct, List<String> monthLabels) {
+    final data = _chartPeriod == 0 ? weekPct : monthPct;
+    final labels = _chartPeriod == 0 ? weekLabels : monthLabels;
+    final hasData = data.any((v) => v > 0);
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 24),
+      child: Container(
+        decoration: BoxDecoration(
+          color: AppColors.surface,
+          border: Border.all(color: AppColors.border),
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Column(children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 16, 16, 0),
+            child: Row(children: [
+              Text('Shooting %',
+                  style: AppText.ui(14, weight: FontWeight.w600)),
+              const Spacer(),
+              Container(
+                height: 30,
+                padding: const EdgeInsets.all(3),
+                decoration: BoxDecoration(
+                  color: AppColors.bg,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(children: [
+                  _PeriodBtn('7D', _chartPeriod == 0,
+                      () => setState(() => _chartPeriod = 0)),
+                  _PeriodBtn('6M', _chartPeriod == 1,
+                      () => setState(() => _chartPeriod = 1)),
+                ]),
+              ),
+            ]),
+          ),
+          const SizedBox(height: 6),
+          if (hasData) ...[
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: Row(children: [
+                Text(
+                    '${(data.where((v) => v > 0).reduce(math.min) * 100).round()}% low',
+                    style: AppText.ui(12, color: AppColors.text2)),
+                const Spacer(),
+                Text('${(data.reduce(math.max) * 100).round()}% peak',
+                    style: AppText.ui(11, color: AppColors.green)),
+              ]),
+            ),
+            const SizedBox(height: 4),
+            SizedBox(
+              height: 160,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+                child: CustomPaint(
+                  painter: _LineChartPainter(data: data, labels: labels),
+                  size: Size.infinite,
+                ),
+              ),
+            ),
+          ] else
+            Padding(
+              padding: const EdgeInsets.all(24),
+              child: Center(
+                child: Text('No shooting data for this period',
+                    style: AppText.ui(13, color: AppColors.text3)),
+              ),
+            ),
+        ]),
+      ),
+    );
+  }
+
+// ── Consistency Calendar ──────────────────────────────────────────────────
+
+  Widget _calendarHeatmap(
+      List<List<double>> calendarData, double consistencyScore) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 24),
+      child: Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: AppColors.surface,
+          border: Border.all(color: AppColors.border),
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(children: [
+              Text(
+                  '${calendarData.expand((r) => r).where((v) => v > 0).length} sessions in 5 weeks',
+                  style: AppText.ui(13, weight: FontWeight.w600)),
+              const Spacer(),
+              _consistencyBadge(consistencyScore),
+            ]),
+            const SizedBox(height: 16),
+            Row(children: [
+              const SizedBox(width: 8),
+              ...['M', 'T', 'W', 'T', 'F', 'S', 'S'].map((d) => Expanded(
+                    child: Center(
+                        child: Text(d,
+                            style: AppText.ui(12,
+                                color: AppColors.text2,
+                                weight: FontWeight.w700))),
+                  )),
+            ]),
+            const SizedBox(height: 8),
+            ...calendarData.map((week) => Padding(
+                  padding: const EdgeInsets.only(bottom: 6),
+                  child: Row(children: [
+                    const SizedBox(width: 8),
+                    ...week.map((val) => Expanded(
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 2),
+                            child: AspectRatio(
+                              aspectRatio: 1,
+                              child: Container(
+                                decoration: BoxDecoration(
+                                  borderRadius: BorderRadius.circular(4),
+                                  color: val == 0
+                                      ? AppColors.borderSub
+                                      : AppColors.gold
+                                          .withValues(alpha: 0.15 + 0.75 * val),
+                                ),
+                              ),
+                            ),
+                          ),
+                        )),
+                  ]),
+                )),
+            const SizedBox(height: 12),
+            Row(mainAxisAlignment: MainAxisAlignment.end, children: [
+              Text('Less ', style: AppText.ui(12, color: AppColors.text2)),
+              ...List.generate(
+                  5,
+                  (i) => Container(
+                        width: 10,
+                        height: 10,
+                        margin: const EdgeInsets.only(left: 3),
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(2),
+                          color: i == 0
+                              ? AppColors.borderSub
+                              : AppColors.gold
+                                  .withValues(alpha: 0.15 + 0.75 * (i / 4)),
+                        ),
+                      )),
+              Text(' More', style: AppText.ui(12, color: AppColors.text2)),
+            ]),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _consistencyBadge(double score) {
+    final scoreInt = (score * 100).round();
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(
+        color: AppColors.greenSoft,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(children: [
+        Text('Consistency: ', style: AppText.ui(11, color: AppColors.text2)),
+        Text('$scoreInt%',
+            style: AppText.ui(11,
+                weight: FontWeight.w700, color: AppColors.green)),
+      ]),
+    );
+  }
 }
 
 // ── Sub Widgets ──────────────────────────────────────────────────────────────
 
-class _RingChart extends StatelessWidget {
-  final double value;
-  final double size;
-  const _RingChart({required this.value, required this.size});
-
+class _PeriodBtn extends StatelessWidget {
+  final String label;
+  final bool active;
+  final VoidCallback onTap;
+  const _PeriodBtn(this.label, this.active, this.onTap);
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      width: size,
-      height: size,
-      child: CustomPaint(painter: _RingPainter(value)),
-    );
-  }
-}
-
-class _RingPainter extends CustomPainter {
-  final double value;
-  const _RingPainter(this.value);
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final c = Offset(size.width / 2, size.height / 2);
-    final r = size.width / 2 - 5;
-    const sw = 5.0;
-
-    canvas.drawCircle(
-      c,
-      r,
-      Paint()
-        ..color = AppColors.border
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = sw,
-    );
-
-    final rect = Rect.fromCircle(center: c, radius: r);
-    canvas.drawArc(
-      rect,
-      -math.pi / 2,
-      2 * math.pi * value,
-      false,
-      Paint()
-        ..color = AppColors.gold
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = sw
-        ..strokeCap = StrokeCap.round,
-    );
-  }
-
-  @override
-  bool shouldRepaint(_) => false;
-}
-
-class _StatTile extends StatelessWidget {
-  final String label, value;
-  final Color color;
-  const _StatTile({
-    required this.label,
-    required this.value,
-    required this.color,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Expanded(
-      child: Column(
-        children: [
-          Text(
-            value,
-            style: AppText.ui(18, weight: FontWeight.w700, color: color),
-          ),
-          const SizedBox(height: 3),
-          Text(
-            label,
-            style: AppText.ui(9, color: AppColors.text3, letterSpacing: 0.8),
-          ),
-        ],
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 180),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+        decoration: BoxDecoration(
+          color: active ? AppColors.gold : Colors.transparent,
+          borderRadius: BorderRadius.circular(5),
+        ),
+        child: Text(label,
+            style: AppText.ui(11,
+                weight: FontWeight.w700,
+                color: active ? AppColors.bg : AppColors.text3)),
       ),
     );
   }
 }
 
-class _StatTileDivider extends StatelessWidget {
-  const _StatTileDivider();
-  @override
-  Widget build(BuildContext context) =>
-      Container(width: 1, height: 32, color: AppColors.borderSub);
-}
-
-class _BarChart extends StatelessWidget {
+class _LineChartPainter extends CustomPainter {
   final List<double> data;
   final List<String> labels;
-  const _BarChart({required this.data, required this.labels});
+  const _LineChartPainter({required this.data, required this.labels});
 
   @override
-  Widget build(BuildContext context) {
-    final maxV = data.reduce(math.max);
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.end,
-      children: List.generate(data.length, (i) {
-        final isLast = i == data.length - 1;
-        final pct = data[i] / maxV;
-        return Expanded(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 4),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                if (isLast)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 5),
-                    child: Text(
-                      '${data[i].toInt()}%',
-                      style: AppText.ui(
-                        10,
-                        weight: FontWeight.w700,
-                        color: AppColors.gold,
-                      ),
-                    ),
-                  ),
-                ClipRRect(
-                  borderRadius: const BorderRadius.vertical(
-                    top: Radius.circular(5),
-                  ),
-                  child: Container(
-                    height: 72 * pct,
-                    decoration: BoxDecoration(
-                      color: isLast ? AppColors.gold : AppColors.surfaceHi,
-                      borderRadius: const BorderRadius.vertical(
-                        top: Radius.circular(5),
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  labels[i],
-                  style: AppText.ui(
-                    11,
-                    color: isLast ? AppColors.gold : AppColors.text3,
-                    weight: isLast ? FontWeight.w700 : FontWeight.w400,
-                  ),
-                ),
-              ],
-            ),
+  void paint(Canvas canvas, Size size) {
+    if (data.isEmpty) return;
+
+    const padLeft = 32.0;
+    const padBottom = 24.0;
+    const padTop = 12.0;
+    final chartW = size.width - padLeft;
+    final chartH = size.height - padBottom - padTop;
+
+    final minV = (data.reduce(math.min) - 0.05).clamp(0.0, 1.0);
+    final maxV = (data.reduce(math.max) + 0.05).clamp(0.0, 1.0);
+    final range = maxV - minV;
+
+    double dx(int i) => padLeft + i * chartW / (data.length - 1);
+    double dy(double v) => padTop + (1 - (v - minV) / range) * chartH;
+
+    // Horizontal guides
+    final guidePaint = Paint()
+      ..color = AppColors.borderSub
+      ..strokeWidth = 1;
+    for (int g = 0; g <= 4; g++) {
+      final y = padTop + g * chartH / 4;
+      canvas.drawLine(Offset(padLeft, y), Offset(size.width, y), guidePaint);
+      final val = (maxV - g * range / 4) * 100;
+      final tp = TextPainter(
+        text: TextSpan(
+            text: '${val.round()}',
+            style: const TextStyle(color: AppColors.text3, fontSize: 9)),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      tp.paint(canvas, Offset(0, y - tp.height / 2));
+    }
+
+    // Gradient area under curve
+    final areaPath = Path();
+    areaPath.moveTo(dx(0), dy(data[0]));
+    for (int i = 1; i < data.length; i++) {
+      final cp1 = Offset((dx(i - 1) + dx(i)) / 2, dy(data[i - 1]));
+      final cp2 = Offset((dx(i - 1) + dx(i)) / 2, dy(data[i]));
+      areaPath.cubicTo(cp1.dx, cp1.dy, cp2.dx, cp2.dy, dx(i), dy(data[i]));
+    }
+    areaPath.lineTo(dx(data.length - 1), padTop + chartH);
+    areaPath.lineTo(dx(0), padTop + chartH);
+    areaPath.close();
+
+    canvas.drawPath(
+        areaPath,
+        Paint()
+          ..shader = LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [
+              AppColors.gold.withValues(alpha: 0.22),
+              AppColors.gold.withValues(alpha: 0.0)
+            ],
+          ).createShader(Rect.fromLTWH(0, padTop, size.width, chartH)));
+
+    // Line
+    final linePath = Path();
+    linePath.moveTo(dx(0), dy(data[0]));
+    for (int i = 1; i < data.length; i++) {
+      final cp1 = Offset((dx(i - 1) + dx(i)) / 2, dy(data[i - 1]));
+      final cp2 = Offset((dx(i - 1) + dx(i)) / 2, dy(data[i]));
+      linePath.cubicTo(cp1.dx, cp1.dy, cp2.dx, cp2.dy, dx(i), dy(data[i]));
+    }
+    canvas.drawPath(
+        linePath,
+        Paint()
+          ..color = AppColors.gold
+          ..strokeWidth = 2.0
+          ..style = PaintingStyle.stroke
+          ..strokeCap = StrokeCap.round
+          ..isAntiAlias = true);
+
+    // Dots + values
+    for (int i = 0; i < data.length; i++) {
+      final isLast = i == data.length - 1;
+      canvas.drawCircle(
+          Offset(dx(i), dy(data[i])),
+          isLast ? 5 : 3.5,
+          Paint()
+            ..color = isLast
+                ? AppColors.gold
+                : AppColors.gold.withValues(alpha: 0.6));
+      if (isLast) {
+        canvas.drawCircle(
+            Offset(dx(i), dy(data[i])),
+            5,
+            Paint()
+              ..color = AppColors.bg
+              ..style = PaintingStyle.fill);
+        canvas.drawCircle(
+            Offset(dx(i), dy(data[i])),
+            5,
+            Paint()
+              ..color = AppColors.gold
+              ..style = PaintingStyle.stroke
+              ..strokeWidth = 2);
+      }
+
+      final tp = TextPainter(
+        text: TextSpan(
+          text: labels[i],
+          style: TextStyle(
+            color: isLast ? AppColors.gold : AppColors.text3,
+            fontSize: 10,
+            fontWeight: isLast ? FontWeight.w700 : FontWeight.w400,
           ),
-        );
-      }),
-    );
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      tp.paint(
+          canvas, Offset(dx(i) - tp.width / 2, size.height - padBottom + 4));
+    }
   }
+
+  @override
+  bool shouldRepaint(covariant _LineChartPainter old) => old.data != data;
 }
 
 class _QuickCard extends StatelessWidget {

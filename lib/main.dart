@@ -4,11 +4,13 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'config/supabase_config.dart';
 import 'screens/splash_screen.dart';
-import 'package:sherpa_onnx/sherpa_onnx.dart' as sherpa;
+import 'services/sherpa_init.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  sherpa.initBindings();
+  initSherpa(); // no-op on web, initBindings() on iOS/Android
+
+  SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
   await Supabase.initialize(
     url: SupabaseConfig.url,
     anonKey: SupabaseConfig.anonKey,
@@ -43,30 +45,19 @@ class HooplyticApp extends StatelessWidget {
   }
 }
 
-// ── Design Tokens ──────────────────────────────────────────────────────────────
-
 abstract class AppColors {
-  // Backgrounds
   static const bg = Color(0xFF0C0C0E);
   static const surface = Color(0xFF141417);
   static const surfaceHi = Color(0xFF1C1C21);
-
-  // Borders
   static const border = Color(0xFF252529);
   static const borderSub = Color(0xFF1A1A1E);
-
-  // Gold accent (premium)
   static const gold = Color(0xFFD4A843);
   static const goldMid = Color(0xFFAA8530);
   static const goldSoft = Color(0x18D4A843);
   static const goldGlow = Color(0x30D4A843);
-
-  // Text
   static const text1 = Color(0xFFF0F0F2);
-  static const text2 = Color(0xFF888896);
-  static const text3 = Color(0xFF44444C);
-
-  // Semantics
+  static const text2 = Color(0xFFAAAAAF);
+  static const text3 = Color(0xFF70707A);
   static const green = Color(0xFF3DD68C);
   static const greenSoft = Color(0x163DD68C);
   static const red = Color(0xFFFF5252);
@@ -77,16 +68,10 @@ abstract class AppColors {
 }
 
 abstract class AppText {
-  /// Bebas Neue – large display numbers & headlines
   static TextStyle display(double size, {Color color = AppColors.text1}) =>
       GoogleFonts.bebasNeue(
-        fontSize: size,
-        color: color,
-        letterSpacing: 1.0,
-        height: 1.0,
-      );
+          fontSize: size, color: color, letterSpacing: 1.0, height: 1.0);
 
-  /// DM Sans – all UI copy
   static TextStyle ui(
     double size, {
     FontWeight weight = FontWeight.w400,
@@ -94,9 +79,8 @@ abstract class AppText {
     double letterSpacing = 0.0,
   }) =>
       GoogleFonts.dmSans(
-        fontSize: size,
-        fontWeight: weight,
-        color: color,
-        letterSpacing: letterSpacing,
-      );
+          fontSize: size,
+          fontWeight: weight,
+          color: color,
+          letterSpacing: letterSpacing);
 }

@@ -1,8 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../main.dart';
+import '../widgets/basketball_court_map.dart';
 import 'session_detail_screen.dart';
 import 'session_setup_screen.dart';
+import '../models/session.dart';
+import '../services/session_service.dart';
+import 'manual_entry_screen.dart';
+import 'history_screen.dart';
 
 // ═════════════════════════════════════════════════════════════════════════════
 //  MANUAL SESSION DETAIL SCREEN
@@ -12,7 +17,13 @@ import 'session_setup_screen.dart';
 
 class ManualSessionDetailScreen extends StatefulWidget {
   final HoopSession session;
-  const ManualSessionDetailScreen({super.key, required this.session});
+  final Session originalSession;
+
+  const ManualSessionDetailScreen({
+    super.key,
+    required this.session,
+    required this.originalSession,
+  });
   @override
   State<ManualSessionDetailScreen> createState() =>
       _ManualSessionDetailScreenState();
@@ -24,8 +35,103 @@ class _ManualSessionDetailScreenState extends State<ManualSessionDetailScreen>
       vsync: this, duration: const Duration(milliseconds: 550))
     ..forward();
 
-  HoopSession get s => widget.session;
-  int get pct => (s.made / s.attempts * 100).round();
+  late HoopSession _session;
+  late Session _originalSession;
+
+  @override
+  void initState() {
+    super.initState();
+    _session = widget.session;
+    _originalSession = widget.originalSession;
+  }
+
+  HoopSession get s => _session;
+  int get pct => (s.attempts > 0) ? (s.made / s.attempts * 100).round() : 0;
+
+  Future<void> _deleteSession() async {
+    final confirmed = await _showDeleteConfirm();
+    if (confirmed != true) return;
+
+    try {
+      await SessionService().deleteSession(_originalSession.id!);
+      if (mounted) {
+        Navigator.pop(context);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Session deleted', style: AppText.ui(13)),
+            backgroundColor: AppColors.surface,
+            behavior: SnackBarBehavior.floating,
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e'), backgroundColor: AppColors.red),
+        );
+      }
+    }
+  }
+
+  Future<bool?> _showDeleteConfirm() async {
+    HapticFeedback.vibrate();
+    return showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.surface,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Text('Delete Session?',
+            style: AppText.ui(18, weight: FontWeight.w700)),
+        content: Text(
+          'Are you sure you want to delete this session? This cannot be undone.',
+          style: AppText.ui(14, color: AppColors.text2),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text('Cancel',
+                style: AppText.ui(14,
+                    color: AppColors.text3, weight: FontWeight.w600)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text('Delete',
+                style: AppText.ui(14,
+                    color: AppColors.red, weight: FontWeight.w700)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _editSession() async {
+    final updated = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        builder: (context) =>
+            ManualEntryScreen(initialSession: _originalSession),
+      ),
+    );
+
+    if (updated == true && mounted) {
+      try {
+        final newSession =
+            await SessionService().getSession(_originalSession.id!);
+        // Use HistoryEntry format to get HoopSession
+        final entry = HistoryEntry.fromSession(newSession);
+        if (entry.hoopSession != null && mounted) {
+          setState(() {
+            _originalSession = newSession;
+            _session = entry.hoopSession!;
+          });
+        }
+      } catch (e) {
+        debugPrint('Failed to refresh session details: $e');
+      }
+    }
+  }
 
   Color get pctColor {
     if (pct >= 70) return AppColors.green;
@@ -70,6 +176,14 @@ class _ManualSessionDetailScreenState extends State<ManualSessionDetailScreen>
                 _performanceSection(),
                 const SizedBox(height: 28),
                 _insightsSection(),
+                const SizedBox(height: 48),
+                Row(
+                  children: [
+                    Expanded(child: _editButton()),
+                    const SizedBox(width: 12),
+                    Expanded(child: _deleteButton()),
+                  ],
+                ),
               ]),
             ),
           ),
@@ -77,6 +191,42 @@ class _ManualSessionDetailScreenState extends State<ManualSessionDetailScreen>
       ),
     );
   }
+
+  Widget _editButton() => GestureDetector(
+        onTap: _editSession,
+        child: Container(
+          width: double.infinity,
+          height: 56,
+          decoration: BoxDecoration(
+            color: AppColors.green.withValues(alpha: 0.10),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: AppColors.green.withValues(alpha: 0.25)),
+          ),
+          child: Center(
+            child: Text('Edit Session',
+                style: AppText.ui(14,
+                    weight: FontWeight.w700, color: AppColors.green)),
+          ),
+        ),
+      );
+
+  Widget _deleteButton() => GestureDetector(
+        onTap: _deleteSession,
+        child: Container(
+          width: double.infinity,
+          height: 56,
+          decoration: BoxDecoration(
+            color: AppColors.red.withValues(alpha: 0.10),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: AppColors.red.withValues(alpha: 0.25)),
+          ),
+          child: Center(
+            child: Text('Delete Session',
+                style: AppText.ui(14,
+                    weight: FontWeight.w700, color: AppColors.red)),
+          ),
+        ),
+      );
 
   // ── top bar ───────────────────────────────────────────────────────────────
 
@@ -101,10 +251,10 @@ class _ManualSessionDetailScreenState extends State<ManualSessionDetailScreen>
           const SizedBox(width: 14),
           Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Text('SESSION DETAILS',
-                style: AppText.ui(9,
-                    color: AppColors.text3,
-                    letterSpacing: 1.8,
-                    weight: FontWeight.w700)),
+                style: AppText.ui(11,
+                    color: AppColors.text2,
+                    letterSpacing: 1.4,
+                    weight: FontWeight.w800)),
             Text(s.zone, style: AppText.ui(15, weight: FontWeight.w700)),
           ]),
           const Spacer(),
@@ -116,10 +266,10 @@ class _ManualSessionDetailScreenState extends State<ManualSessionDetailScreen>
                 border:
                     Border.all(color: AppColors.blue.withValues(alpha: 0.28))),
             child: Text('MANUAL',
-                style: AppText.ui(9,
+                style: AppText.ui(11,
                     weight: FontWeight.w800,
                     color: AppColors.blue,
-                    letterSpacing: 0.8)),
+                    letterSpacing: 0.5)),
           ),
         ]),
       );
@@ -227,40 +377,22 @@ class _ManualSessionDetailScreenState extends State<ManualSessionDetailScreen>
   Widget _courtSection() =>
       Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         _sectionLabel('COURT POSITION'),
-        AspectRatio(
-          aspectRatio: 1.3,
-          child: Container(
-            decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: AppColors.border),
-                color: const Color(0xFF131315)),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(20),
-              child: LayoutBuilder(builder: (_, box) {
-                final geo = CourtGeo(box.maxWidth, box.maxHeight);
-                return Stack(children: [
-                  Positioned.fill(
-                      child: CustomPaint(painter: CourtLinePainter(geo))),
-                  if (s.mode == SessionMode.range)
-                    Positioned.fill(
-                        child: CustomPaint(
-                            painter: RangeZonePainter(geo, s.id, const [
-                      RangeZone('layup', 'Layup', 0),
-                      RangeZone('close', 'Close Shot', 1),
-                      RangeZone('mid', 'Mid Range', 2),
-                      RangeZone('three', 'Three Point', 3),
-                    ]))),
-                  if (s.mode == SessionMode.position)
-                    ...geo.spots.where((sp) => sp.id == s.id).map((sp) =>
-                        Positioned(
-                            left: sp.fx * geo.w - 28,
-                            top: sp.fy * geo.h - 28,
-                            child: CourtSpotWidget(
-                                selected: true, label: sp.label))),
-                ]);
-              }),
-            ),
-          ),
+        BasketballCourtMap(
+          mode: s.mode == SessionMode.position
+              ? CourtMapMode.setup
+              : CourtMapMode.range,
+          selectedId: s.id,
+          spots: s.mode == SessionMode.position
+              ? [MapSpotData(id: s.id, label: s.zone)]
+              : const [],
+          zones: s.mode == SessionMode.range
+              ? const [
+                  RangeZone('layup', 'Layup', 0),
+                  RangeZone('close', 'Close Shot', 1),
+                  RangeZone('mid', 'Mid Range', 2),
+                  RangeZone('three', 'Three Point', 3),
+                ]
+              : const [],
         ),
       ]);
 
@@ -285,10 +417,10 @@ class _ManualSessionDetailScreenState extends State<ManualSessionDetailScreen>
             Text(value, style: AppText.display(30, color: vc)),
             const SizedBox(height: 4),
             Text(label,
-                style: AppText.ui(9,
-                    color: AppColors.text3,
-                    letterSpacing: 1.2,
-                    weight: FontWeight.w700)),
+                style: AppText.ui(11,
+                    color: AppColors.text2,
+                    letterSpacing: 1.0,
+                    weight: FontWeight.w800)),
           ])));
 
   // ── performance ───────────────────────────────────────────────────────────
@@ -444,10 +576,10 @@ class _ManualSessionDetailScreenState extends State<ManualSessionDetailScreen>
               Icon(icon, size: 13, color: color),
               const SizedBox(width: 6),
               Text(label,
-                  style: AppText.ui(9,
-                      color: AppColors.text3,
-                      weight: FontWeight.w700,
-                      letterSpacing: 0.5))
+                  style: AppText.ui(11,
+                      color: AppColors.text2,
+                      weight: FontWeight.w800,
+                      letterSpacing: 0.2))
             ]),
             const Spacer(),
             Text(value,
@@ -459,10 +591,10 @@ class _ManualSessionDetailScreenState extends State<ManualSessionDetailScreen>
       padding: const EdgeInsets.only(bottom: 12),
       child: Row(children: [
         Text(t,
-            style: AppText.ui(9,
-                color: AppColors.text3,
-                letterSpacing: 1.6,
-                weight: FontWeight.w700)),
+            style: AppText.ui(11,
+                color: AppColors.text2,
+                letterSpacing: 1.4,
+                weight: FontWeight.w800)),
         const SizedBox(width: 10),
         Expanded(child: Container(height: 1, color: AppColors.borderSub)),
       ]));

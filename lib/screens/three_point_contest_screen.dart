@@ -5,7 +5,7 @@ import '../main.dart';
 import '../models/session.dart';
 import '../models/shot.dart';
 import '../services/session_service.dart';
-
+import '../utils/performance.dart';
 // ═════════════════════════════════════════════════════════════════════════════
 //  THREE POINT CONTEST SCREEN
 //  5 racks × 5 balls. Last ball of each rack = money ball (worth 2 pts).
@@ -737,18 +737,12 @@ class _ResultSheet extends StatelessWidget {
 
   String get _grade {
     final pct = score / maxScore;
-    if (pct >= 0.87) return 'S';
-    if (pct >= 0.73) return 'A';
-    if (pct >= 0.57) return 'B';
-    if (pct >= 0.40) return 'C';
-    return 'D';
+    return PerformanceGuide.gradeFor(pct);
   }
 
   Color get _gc {
     final p = score / maxScore;
-    if (p >= 0.73) return AppColors.green;
-    if (p >= 0.40) return AppColors.gold;
-    return AppColors.red;
+    return PerformanceGuide.colorFor(p);
   }
 
   @override

@@ -24,6 +24,7 @@ class ModelExtractor {
   /// Zwraca mapę: nazwa_klucza → absolutna ścieżka na dysku.
   /// Kopiuje pliki tylko jeśli jeszcze nie istnieją (cache).
   static Future<Map<String, String>> extractAll() async {
+    if (kIsWeb) return {};
     final dir = await getApplicationSupportDirectory();
     final result = <String, String>{};
 
@@ -57,6 +58,7 @@ class ModelExtractor {
 
   /// Czyści cache – użyj gdy chcesz wymusić ponowne skopiowanie modeli.
   static Future<void> clearCache() async {
+    if (kIsWeb) return;
     final dir = await getApplicationSupportDirectory();
     for (final fileName in _assets.values) {
       final f = File('${dir.path}/$fileName');
