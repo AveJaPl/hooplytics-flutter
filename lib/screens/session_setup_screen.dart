@@ -397,6 +397,7 @@ class _SessionSetupScreenState extends State<SessionSetupScreen>
   Widget _court() => Padding(
         padding: const EdgeInsets.symmetric(horizontal: 20),
         child: BasketballCourtMap(
+          themeColor: AppColors.gold,
           mode: _mode == SessionMode.position
               ? CourtMapMode.setup
               : CourtMapMode.range,

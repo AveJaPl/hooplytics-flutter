@@ -73,7 +73,6 @@ const _allModes = [
     category: ModeCategory.social,
     players: 2,
     difficulty: 'Medium',
-    isNew: true,
   ),
   GameMode(
     id: 'horse',
@@ -87,7 +86,6 @@ const _allModes = [
     category: ModeCategory.social,
     players: 2,
     difficulty: 'Medium',
-    isNew: true,
   ),
 
   // ── CHALLENGE ─────────────────────────────────────────────────────────────
@@ -770,53 +768,33 @@ class _ModeDetailSheet extends StatelessWidget {
           ]),
         ),
 
-        // Bottom buttons
         Padding(
           padding: const EdgeInsets.fromLTRB(22, 16, 22, 28),
-          child: Row(children: [
-            GestureDetector(
-              onTap: () => Navigator.pop(context),
-              child: Container(
-                height: 52,
-                width: 52,
-                decoration: BoxDecoration(
-                    color: AppColors.bg,
-                    border: Border.all(color: AppColors.border),
-                    borderRadius: BorderRadius.circular(14)),
-                child: const Icon(Icons.close_rounded,
-                    color: AppColors.text2, size: 20),
+          child: GestureDetector(
+            onTap: onStart,
+            child: Container(
+              height: 54, // Slightly taller for better ergonomics
+              decoration: BoxDecoration(
+                color: mode.color,
+                borderRadius: BorderRadius.circular(16),
+                boxShadow: [
+                  BoxShadow(
+                      color: mode.color.withValues(alpha: 0.28),
+                      blurRadius: 16,
+                      offset: const Offset(0, 5))
+                ],
               ),
+              child:
+                  Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                const Icon(Icons.play_arrow_rounded,
+                    color: Colors.black, size: 24),
+                const SizedBox(width: 8),
+                Text('Start Game',
+                    style: AppText.ui(16,
+                        weight: FontWeight.w800, color: Colors.black)),
+              ]),
             ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: GestureDetector(
-                onTap: onStart,
-                child: Container(
-                  height: 52,
-                  decoration: BoxDecoration(
-                    color: mode.color,
-                    borderRadius: BorderRadius.circular(14),
-                    boxShadow: [
-                      BoxShadow(
-                          color: mode.color.withValues(alpha: 0.28),
-                          blurRadius: 16,
-                          offset: const Offset(0, 5))
-                    ],
-                  ),
-                  child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        const Icon(Icons.play_arrow_rounded,
-                            color: Colors.black, size: 22),
-                        const SizedBox(width: 8),
-                        Text('Start Game',
-                            style: AppText.ui(15,
-                                weight: FontWeight.w800, color: Colors.black)),
-                      ]),
-                ),
-              ),
-            ),
-          ]),
+          ),
         ),
       ]),
     );

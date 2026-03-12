@@ -393,6 +393,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
       Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         _label('COURT POSITION'),
         BasketballCourtMap(
+          themeColor: widget.session.color,
           mode: widget.session.mode == SessionMode.position
               ? CourtMapMode.setup
               : CourtMapMode.range,

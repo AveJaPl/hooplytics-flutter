@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -10,7 +11,9 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   initSherpa(); // no-op on web, initBindings() on iOS/Android
 
-  SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+  if (defaultTargetPlatform != TargetPlatform.iOS) {
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+  }
   await Supabase.initialize(
     url: SupabaseConfig.url,
     anonKey: SupabaseConfig.anonKey,
@@ -23,6 +26,11 @@ void main() async {
       systemNavigationBarColor: Color(0xFF0C0C0E),
     ),
   );
+
+  await SystemChrome.setPreferredOrientations([
+    DeviceOrientation.portraitUp,
+    DeviceOrientation.portraitDown,
+  ]);
 
   runApp(const HooplyticApp());
 }

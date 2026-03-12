@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../main.dart';
 import 'history_screen.dart';
+import '../widgets/basketball_court_map.dart';
 import '../services/session_service.dart';
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -246,7 +247,7 @@ class _State extends State<GameSessionDetailScreen>
           const SizedBox(width: 16),
           Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
             if (e.pct != null) ...[
-              // Big % in e.color — not performance color
+              // Big % in result-dependent color
               Text(e.pctStr, style: AppText.display(48, color: e.color)),
               Text('${e.made}/${e.attempts}',
                   style: AppText.ui(12, color: AppColors.text2)),
@@ -821,6 +822,13 @@ class _State extends State<GameSessionDetailScreen>
     final att = e.attempts ?? 0;
 
     return [
+      _label('COURT MAP'),
+      BasketballCourtMap(
+        themeColor: e.color,
+        mode: CourtMapMode.stats,
+        spots: const [],
+      ),
+      const SizedBox(height: 14),
       _label('SPOT PERFORMANCE'),
       Container(
           padding: const EdgeInsets.all(16),
@@ -1010,16 +1018,26 @@ class _State extends State<GameSessionDetailScreen>
 
   Widget _genericContent() {
     if (e.made == null) return const SizedBox.shrink();
-    return Container(
-        padding: const EdgeInsets.all(20),
-        decoration: _box(),
-        child: Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
-          _bigStat('${e.made}', 'MADE', e.color),
-          _vDiv(),
-          _bigStat('${e.attempts}', 'ATTEMPTS', AppColors.text1),
-          _vDiv(),
-          _bigStat(e.pctStr, 'ACC', e.color),
-        ]));
+    return Column(children: [
+      Container(
+          padding: const EdgeInsets.all(20),
+          decoration: _box(),
+          child:
+              Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
+            _bigStat('${e.made}', 'MADE', e.color),
+            _vDiv(),
+            _bigStat('${e.attempts}', 'ATTEMPTS', AppColors.text1),
+            _vDiv(),
+            _bigStat(e.pctStr, 'ACC', e.color),
+          ])),
+      const SizedBox(height: 14),
+      _label('COURT MAP'),
+      BasketballCourtMap(
+        themeColor: e.color,
+        mode: CourtMapMode.stats,
+        spots: const [],
+      ),
+    ]);
   }
 
   // ══════════════════════════════════════════════════════════════════════════

@@ -85,6 +85,12 @@ class _AsrServiceImpl {
     required void Function(String, Map<String, dynamic>?) onEvent,
   }) async {
     if (_running) return;
+
+    // Upewnij sie ze poprzednia sesja jest zamknięta
+    await _asrEngine?.stop();
+    await _asrEngine?.dispose();
+    _asrEngine = null;
+
     _emit = onEvent;
 
     _status('Inicjalizacja...');
@@ -102,14 +108,6 @@ class _AsrServiceImpl {
       _status('Audio session OK');
     } catch (e) {
       _status('Audio session BŁĄD: $e');
-    }
-
-    // Wyczyść cache – wymuś ponowne skopiowanie modeli
-    try {
-      await ModelExtractor.clearCache();
-      _status('Cache wyczyszczony');
-    } catch (e) {
-      _status('Cache error: $e');
     }
 
     _status('Kopiuję modele...');
@@ -541,6 +539,8 @@ class _AudioFeedback {
   Future<void> playEnd() => _play(_pEnd);
 
   Future<void> dispose() async {
-    for (final p in [_pMake, _pSwish, _pMiss, _pUndo, _pEnd]) await p.dispose();
+    for (final p in [_pMake, _pSwish, _pMiss, _pUndo, _pEnd]) {
+      await p.dispose();
+    }
   }
 }

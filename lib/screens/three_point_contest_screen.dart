@@ -152,6 +152,12 @@ class _ThreePointContestScreenState extends State<ThreePointContestScreen>
     setState(() {
       _gameOver = true;
     });
+
+    if (_currentRack == 0 && _currentBall == 0) {
+      Navigator.of(context).pop();
+      return;
+    }
+
     _saveSession();
     Future.delayed(const Duration(milliseconds: 300), () {
       if (mounted) _showResult();
@@ -159,7 +165,6 @@ class _ThreePointContestScreenState extends State<ThreePointContestScreen>
   }
 
   Future<void> _saveSession() async {
-    if (_made == 0 && _score == 0) return; // ignore empty sessions
     try {
       List<Shot> shots = [];
       int order = 0;

@@ -300,6 +300,12 @@ class _SoloChallengeScreenState extends State<SoloChallengeScreen>
     setState(() {
       _gameOver = true;
     });
+
+    if (_attempts == 0) {
+      Navigator.of(context).pop();
+      return;
+    }
+
     _saveSession();
     Future.delayed(const Duration(milliseconds: 400), () {
       if (!mounted) return;

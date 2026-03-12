@@ -13,7 +13,7 @@ dependencies:
   provider: ^6.1.2
   supabase_flutter: ^2.8.4
   google_sign_in: ^6.2.2
-  sherpa_onnx: ^1.12.28
+  sherpa_onnx: any
   just_audio: ^0.9.40
   audio_session: ^0.1.21
   record: ^6.2.0

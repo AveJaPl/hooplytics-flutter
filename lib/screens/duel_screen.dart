@@ -127,6 +127,7 @@ class _DuelScreenState extends State<DuelScreen> with TickerProviderStateMixin {
   }
 
   Future<void> _saveSession() async {
+    if (_p1attempts == 0 && _p2attempts == 0) return;
     try {
       List<Shot> shots = [];
       for (int i = 0; i < _p1log.length; i++) {

@@ -141,6 +141,7 @@ class BasketballCourtMap extends StatefulWidget {
   final bool showLegend;
   final bool showLabels;
   final double aspectRatio;
+  final Color themeColor;
 
   const BasketballCourtMap({
     super.key,
@@ -157,6 +158,7 @@ class BasketballCourtMap extends StatefulWidget {
     this.showLegend = false,
     this.showLabels = true,
     this.aspectRatio = 1.05,
+    this.themeColor = AppColors.gold,
   });
 
   @override
@@ -186,7 +188,8 @@ class _BasketballCourtMapState extends State<BasketballCourtMap> {
                 children: [
                   // 1. Court Lines
                   Positioned.fill(
-                    child: CustomPaint(painter: _CourtLinePainter(geo)),
+                    child: CustomPaint(
+                        painter: _CourtLinePainter(geo, widget.themeColor)),
                   ),
 
                   // 2. Range Zones (if in range mode)
@@ -194,7 +197,8 @@ class _BasketballCourtMapState extends State<BasketballCourtMap> {
                     Positioned.fill(
                       child: CustomPaint(
                         painter: _RangeZonePainter(
-                            geo, widget.selectedId, widget.zones),
+                            geo, widget.selectedId, widget.zones,
+                            themeColor: widget.themeColor),
                       ),
                     ),
 
@@ -239,10 +243,11 @@ class _BasketballCourtMapState extends State<BasketballCourtMap> {
                             isSelected:
                                 s.id == widget.selectedId || s.isSelected,
                             mode: widget.mode,
+                            themeColor: widget.themeColor,
                           ),
                         ),
                       );
-                    }).toList(),
+                    }),
 
                   // 4. Tooltips (top layer)
                   if (widget.mode == CourtMapMode.stats &&
@@ -259,6 +264,19 @@ class _BasketballCourtMapState extends State<BasketballCourtMap> {
                         child: _TooltipOverlay(spot: s),
                       );
                     }),
+
+                  // 5. Instruction text (top right)
+                  if (widget.mode == CourtMapMode.stats)
+                    Positioned(
+                      top: 12,
+                      right: 12,
+                      child: Text(
+                        'Tap spots for detail',
+                        style: AppText.ui(11,
+                            color: AppColors.text3.withValues(alpha: 0.6),
+                            weight: FontWeight.w600),
+                      ),
+                    ),
                 ],
               );
             }),
@@ -322,7 +340,7 @@ class _TooltipOverlay extends StatelessWidget {
               Padding(
                 padding: const EdgeInsets.only(bottom: 2),
                 child: Text(
-                  '(${_made}/${spot.attempts})',
+                  '($_made/${spot.attempts})',
                   style: AppText.ui(10, color: AppColors.text3),
                 ),
               ),
@@ -343,6 +361,7 @@ class _CourtSpotMarker extends StatefulWidget {
   final int attempts;
   final bool isSelected;
   final CourtMapMode mode;
+  final Color themeColor;
 
   const _CourtSpotMarker({
     required this.id,
@@ -351,6 +370,7 @@ class _CourtSpotMarker extends StatefulWidget {
     required this.attempts,
     required this.isSelected,
     required this.mode,
+    required this.themeColor,
   });
 
   @override
@@ -410,7 +430,7 @@ class _CourtSpotMarkerState extends State<_CourtSpotMarker>
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 border: Border.all(
-                  color: AppColors.gold
+                  color: widget.themeColor
                       .withValues(alpha: 0.50 * (1 - _pulse.value)),
                   width: 1.4,
                 ),
@@ -424,12 +444,12 @@ class _CourtSpotMarkerState extends State<_CourtSpotMarker>
           decoration: BoxDecoration(
             shape: BoxShape.circle,
             color: widget.isSelected
-                ? AppColors.gold
+                ? widget.themeColor
                 : AppColors.text3.withValues(alpha: 0.40),
             boxShadow: widget.isSelected
                 ? [
                     BoxShadow(
-                        color: AppColors.gold.withValues(alpha: 0.50),
+                        color: widget.themeColor.withValues(alpha: 0.50),
                         blurRadius: 10,
                         spreadRadius: 1)
                   ]
@@ -443,7 +463,7 @@ class _CourtSpotMarkerState extends State<_CourtSpotMarker>
   Widget _buildStatsMarker() {
     final Color dotColor = PerformanceGuide.colorFor(widget.pct);
 
-    final radius = 9.0;
+    const radius = 4.5;
 
     return SizedBox(
       width: 42,
@@ -451,13 +471,19 @@ class _CourtSpotMarkerState extends State<_CourtSpotMarker>
       child: Stack(
         alignment: Alignment.center,
         children: [
-          // Glow
-          Container(
-            width: (radius + 5) * 1.5,
-            height: (radius + 5) * 1.5,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: dotColor.withValues(alpha: 0.12),
+          // Pulse Ring Effect
+          AnimatedBuilder(
+            animation: _pulse,
+            builder: (_, __) => Container(
+              width: 38 * (0.76 + 0.24 * _pulse.value),
+              height: 38 * (0.76 + 0.24 * _pulse.value),
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: dotColor.withValues(alpha: 0.50 * (1 - _pulse.value)),
+                  width: 1.4,
+                ),
+              ),
             ),
           ),
           // Fill
@@ -466,8 +492,13 @@ class _CourtSpotMarkerState extends State<_CourtSpotMarker>
             height: radius * 2,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
-              color: dotColor.withValues(alpha: 0.85),
-              border: Border.all(color: dotColor, width: 2.0),
+              color: dotColor,
+              boxShadow: [
+                BoxShadow(
+                    color: dotColor.withValues(alpha: 0.40),
+                    blurRadius: 8,
+                    spreadRadius: 1)
+              ],
             ),
           ),
         ],
@@ -484,50 +515,33 @@ class _MapLegend extends StatelessWidget {
       ('50–69%', AppColors.gold),
       ('<50%', AppColors.red),
     ];
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: [
-        // Left side: Colored legend
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-          decoration: BoxDecoration(
-            color: AppColors.surface,
-            border: Border.all(color: AppColors.border),
-            borderRadius: BorderRadius.circular(16),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: items.map((item) {
-              return Padding(
-                padding: const EdgeInsets.only(right: 12),
-                child: Row(children: [
-                  Container(
-                    width: 10,
-                    height: 10,
-                    decoration: BoxDecoration(
-                      color: item.$2,
-                      shape: BoxShape.circle,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Text(item.$1,
-                      style: AppText.ui(12,
-                          color: AppColors.text2, weight: FontWeight.w600)),
-                ]),
-              );
-            }).toList(),
-          ),
-        ),
-        // Right side: instruction
-        Padding(
-          padding: const EdgeInsets.only(right: 8.0),
-          child: Text(
-            'Tap spots for detail',
-            style:
-                AppText.ui(11, color: AppColors.text3, weight: FontWeight.w500),
-          ),
-        ),
-      ],
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        border: Border.all(color: AppColors.border),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+        children: items.map((item) {
+          return Row(children: [
+            Container(
+              width: 10,
+              height: 10,
+              decoration: BoxDecoration(
+                color: item.$2,
+                shape: BoxShape.circle,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Text(item.$1,
+                style: AppText.ui(12,
+                    color: AppColors.text2, weight: FontWeight.w600)),
+          ]);
+        }).toList(),
+      ),
     );
   }
 }
@@ -538,7 +552,8 @@ class _MapLegend extends StatelessWidget {
 
 class _CourtLinePainter extends CustomPainter {
   final CourtGeo g;
-  const _CourtLinePainter(this.g);
+  final Color themeColor;
+  const _CourtLinePainter(this.g, this.themeColor);
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -592,7 +607,7 @@ class _CourtLinePainter extends CustomPainter {
         Offset(g.bx, g.by),
         g.w * 0.040,
         Paint()
-          ..color = AppColors.gold.withValues(alpha: 0.55)
+          ..color = themeColor.withValues(alpha: 0.55)
           ..strokeWidth = 2.0
           ..style = PaintingStyle.stroke);
 
@@ -614,8 +629,10 @@ class _RangeZonePainter extends CustomPainter {
   final CourtGeo g;
   final String? selectedId;
   final List<RangeZone> zones;
+  final Color themeColor;
 
-  const _RangeZonePainter(this.g, this.selectedId, this.zones);
+  const _RangeZonePainter(this.g, this.selectedId, this.zones,
+      {required this.themeColor});
 
   static String? getZoneAt(CourtGeo g, Offset p) {
     if (!_tp(g).contains(p)) return 'three';
@@ -683,7 +700,7 @@ class _RangeZonePainter extends CustomPainter {
       canvas.drawPath(
           p,
           Paint()
-            ..color = AppColors.gold.withValues(alpha: 0.16)
+            ..color = themeColor.withValues(alpha: 0.16)
             ..style = PaintingStyle.fill);
       _label(canvas, z.label, _center(z.tier), true);
     }
@@ -710,7 +727,7 @@ class _RangeZonePainter extends CustomPainter {
             text: text,
             style: TextStyle(
                 color: selected
-                    ? AppColors.gold
+                    ? themeColor
                     : AppColors.text2.withValues(alpha: 0.6),
                 fontSize: selected ? 13.0 : 11.5,
                 fontWeight: FontWeight.w600)),

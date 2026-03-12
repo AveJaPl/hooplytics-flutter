@@ -196,16 +196,15 @@ class SessionService extends BaseService {
     };
     final zones = <Map<String, dynamic>>[];
     for (final id in ['layup', 'close', 'mid', 'three']) {
-      final data = zoneMap[id];
-      if (data != null && data['attempts']! > 0) {
-        zones.add({
-          'label': zoneLabelMap[id] ?? id,
-          'pct': data['made']! / data['attempts']!,
-          'made': data['made']!,
-          'attempts': data['attempts']!,
-          'tier': zoneTierMap[id] ?? 3,
-        });
-      }
+      final data = zoneMap[id] ?? {'made': 0, 'attempts': 0};
+      final att = data['attempts']!;
+      zones.add({
+        'label': zoneLabelMap[id] ?? id,
+        'pct': att > 0 ? data['made']! / att : 0.0,
+        'made': data['made']!,
+        'attempts': att,
+        'tier': zoneTierMap[id] ?? 3,
+      });
     }
 
     // ── Position stats (by mode == 'position') ──

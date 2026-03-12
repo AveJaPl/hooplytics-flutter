@@ -372,6 +372,11 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
       _serviceReady = false;
     });
 
+    if (_attempts == 0) {
+      Navigator.of(context).pop();
+      return;
+    }
+
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,

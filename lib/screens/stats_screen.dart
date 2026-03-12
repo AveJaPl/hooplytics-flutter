@@ -42,13 +42,15 @@ class _StatsScreenState extends State<StatsScreen>
     ..forward();
 
   late Future<Map<String, dynamic>> _statsFuture;
-  String _activeFilter = 'All time';
+  String _activeFilter = 'Today';
   DateTime? _filterStartDate;
   DateTime? _filterEndDate;
 
   @override
   void initState() {
     super.initState();
+    final now = DateTime.now();
+    _filterStartDate = DateTime(now.year, now.month, now.day);
     _loadStats();
   }
 
@@ -120,6 +122,10 @@ class _StatsScreenState extends State<StatsScreen>
                 ),
               ),
               const SizedBox(height: 16),
+              _filterItem('Today', () {
+                _setFilter('Today', start: today);
+                Navigator.pop(context);
+              }),
               _filterItem('All time', () {
                 _setFilter('All time');
                 Navigator.pop(context);
@@ -274,22 +280,18 @@ class _StatsScreenState extends State<StatsScreen>
               avgShotsPerSession),
           const SizedBox(height: 10),
           _recordsRow(currentStreak, bestStreak),
-          if (zones.isNotEmpty) ...[
-            const SizedBox(height: 28),
-            _sectionLabel('SHOT DISTRIBUTION', context),
-            const SizedBox(height: 14),
-            _shotDistribution(zones),
-            const SizedBox(height: 28),
-            _sectionLabel('ZONE BREAKDOWN', context),
-            const SizedBox(height: 14),
-            _zoneBreakdown(zones),
-          ],
-          if (positions.isNotEmpty) ...[
-            const SizedBox(height: 28),
-            _sectionLabel('POSITION MAP', context),
-            const SizedBox(height: 14),
-            _positionMap(positions),
-          ],
+          const SizedBox(height: 28),
+          _sectionLabel('SHOT DISTRIBUTION', context),
+          const SizedBox(height: 14),
+          _shotDistribution(zones),
+          const SizedBox(height: 28),
+          _sectionLabel('ZONE BREAKDOWN', context),
+          const SizedBox(height: 14),
+          _zoneBreakdown(zones),
+          const SizedBox(height: 28),
+          _sectionLabel('POSITION MAP', context),
+          const SizedBox(height: 14),
+          _positionMap(positions),
           // Recent Sessions removed as redundant with History
         ],
       ),
@@ -370,7 +372,7 @@ class _StatsScreenState extends State<StatsScreen>
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 24),
       child: Container(
-        padding: const EdgeInsets.all(24),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
         decoration: BoxDecoration(
           color: AppColors.surface,
           border: Border.all(color: AppColors.border),
@@ -391,27 +393,13 @@ class _StatsScreenState extends State<StatsScreen>
                     const SizedBox(height: 8),
                     Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
                       Text('${(pct * 100).round()}',
-                          style: AppText.display(80, color: AppColors.text1)),
+                          style: AppText.display(80, color: gradeColor)),
                       Padding(
                         padding: const EdgeInsets.only(bottom: 12, left: 2),
                         child: Text('%',
                             style: AppText.display(32, color: gradeColor)),
                       ),
                     ]),
-                    const SizedBox(height: 8),
-                    // Row(children: [
-                    //   Container(
-                    //     padding: const EdgeInsets.symmetric(
-                    //         horizontal: 8, vertical: 3),
-                    //     decoration: BoxDecoration(
-                    //       color: changeBgColor,
-                    //       borderRadius: BorderRadius.circular(6),
-                    //     ),
-                    //     child: Text(changeStr,
-                    //         style: AppText.ui(11,
-                    //             weight: FontWeight.w700, color: changeColor)),
-                    //   ),
-                    // ]),
                   ]),
             ),
             // Grade ring
@@ -439,15 +427,18 @@ class _StatsScreenState extends State<StatsScreen>
           const SizedBox(height: 18),
 
           // Totals row
-          Row(children: [
-            _HeroStat('MADE', '$totalMade', AppColors.green),
-            _VDiv(),
-            _HeroStat('ATTEMPTS', '$totalAttempts', AppColors.text1),
-            _VDiv(),
-            _HeroStat('SESSIONS', '$totalSessions', AppColors.gold),
-            _VDiv(),
-            _HeroStat('AVG/SESSION', '$avgShotsPerSession', AppColors.blue),
-          ]),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              _HeroStat('MADE', '$totalMade', AppColors.green),
+              _VDiv(),
+              _HeroStat('ATTEMPTS', '$totalAttempts', AppColors.text1),
+              _VDiv(),
+              _HeroStat('SESSIONS', '$totalSessions', AppColors.gold),
+              _VDiv(),
+              _HeroStat('AVG/SESSION', '$avgShotsPerSession', AppColors.blue),
+            ],
+          ),
         ]),
       ),
     );
@@ -507,8 +498,12 @@ class _StatsScreenState extends State<StatsScreen>
             height: 140,
             child: CustomPaint(
               painter: _DonutChartPainter(
-                values: zones.map((z) => z.attempts / total).toList(),
-                colors: colors.sublist(0, zones.length),
+                values: total > 0
+                    ? zones.map((z) => z.attempts / total).toList()
+                    : [1.0],
+                colors: total > 0
+                    ? colors.sublist(0, zones.length)
+                    : [AppColors.borderSub],
               ),
               child: Center(
                 child: Column(mainAxisSize: MainAxisSize.min, children: [
@@ -526,7 +521,8 @@ class _StatsScreenState extends State<StatsScreen>
               crossAxisAlignment: CrossAxisAlignment.start,
               children: List.generate(zones.length, (i) {
                 final z = zones[i];
-                final share = (z.attempts / total * 100).round();
+                final share =
+                    total > 0 ? (z.attempts / total * 100).round() : 0;
                 final c = i < colors.length ? colors[i] : AppColors.text2;
                 return Padding(
                   padding: const EdgeInsets.only(bottom: 12),
@@ -556,7 +552,8 @@ class _StatsScreenState extends State<StatsScreen>
   // ── Zone breakdown ────────────────────────────────────────────────────────────
 
   Widget _zoneBreakdown(List<_ZoneStat> zones) {
-    final maxPct = zones.map((z) => z.pct).reduce(math.max);
+    final maxPct =
+        zones.isEmpty ? 0.0 : zones.map((z) => z.pct).reduce(math.max);
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 24),
@@ -583,6 +580,7 @@ class _StatsScreenState extends State<StatsScreen>
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 20),
         child: BasketballCourtMap(
+          themeColor: AppColors.gold,
           mode: CourtMapMode.stats,
           showLegend: true,
           spots: positions
@@ -613,18 +611,15 @@ class _HeroStat extends StatelessWidget {
   const _HeroStat(this.label, this.value, this.color);
   @override
   Widget build(BuildContext context) {
-    return Expanded(
-      child: Column(children: [
-        Text(value,
-            style: AppText.ui(18, weight: FontWeight.w800, color: color)),
-        const SizedBox(height: 2),
-        Text(label,
-            style: AppText.ui(11,
-                color: AppColors.text2,
-                letterSpacing: 0.5,
-                weight: FontWeight.w700)),
-      ]),
-    );
+    return Column(children: [
+      Text(value, style: AppText.ui(18, weight: FontWeight.w800, color: color)),
+      const SizedBox(height: 2),
+      Text(label,
+          style: AppText.ui(11,
+              color: AppColors.text2,
+              letterSpacing: 0.5,
+              weight: FontWeight.w700)),
+    ]);
   }
 }
 
@@ -647,24 +642,33 @@ class _RecordCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 8),
       decoration: BoxDecoration(
         color: AppColors.surface,
         border: Border.all(color: AppColors.border),
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(18),
       ),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text(icon, style: const TextStyle(fontSize: 20)),
-        const SizedBox(height: 8),
-        Text(label,
-            style: AppText.ui(11,
-                color: AppColors.text2,
-                letterSpacing: 0.8,
-                weight: FontWeight.w800)),
-        const SizedBox(height: 4),
-        Text(value, style: AppText.display(26, color: color)),
-        Text(sub, style: AppText.ui(12, color: AppColors.text2)),
-      ]),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text(icon, style: const TextStyle(fontSize: 14)),
+              const SizedBox(width: 6),
+              Text(label,
+                  style: AppText.ui(10,
+                      color: AppColors.text2,
+                      letterSpacing: 0.8,
+                      weight: FontWeight.w700)),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Text(value, style: AppText.display(36, color: color)),
+          const SizedBox(height: 2),
+          Text(sub, style: AppText.ui(11, color: AppColors.text3)),
+        ],
+      ),
     );
   }
 }
@@ -700,7 +704,7 @@ class _ZoneRow extends StatelessWidget {
               child: Stack(children: [
                 Container(height: 8, color: AppColors.borderSub),
                 FractionallySizedBox(
-                  widthFactor: zone.pct / maxPct,
+                  widthFactor: maxPct > 0 ? zone.pct / maxPct : 0.0,
                   child: Container(
                     height: 8,
                     decoration: BoxDecoration(

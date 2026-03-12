@@ -133,12 +133,6 @@ class _ManualSessionDetailScreenState extends State<ManualSessionDetailScreen>
     }
   }
 
-  Color get pctColor {
-    if (pct >= 70) return AppColors.green;
-    if (pct >= 50) return AppColors.gold;
-    return AppColors.red;
-  }
-
   String get grade {
     if (pct >= 85) return 'S';
     if (pct >= 75) return 'A';
@@ -285,10 +279,10 @@ class _ManualSessionDetailScreenState extends State<ManualSessionDetailScreen>
       padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
         gradient: LinearGradient(colors: [
-          pctColor.withValues(alpha: 0.18),
-          pctColor.withValues(alpha: 0.04)
+          s.color.withValues(alpha: 0.18),
+          s.color.withValues(alpha: 0.04)
         ], begin: Alignment.topLeft, end: Alignment.bottomRight),
-        border: Border.all(color: pctColor.withValues(alpha: 0.30)),
+        border: Border.all(color: s.color.withValues(alpha: 0.30)),
         borderRadius: BorderRadius.circular(24),
       ),
       child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -340,21 +334,21 @@ class _ManualSessionDetailScreenState extends State<ManualSessionDetailScreen>
               width: 96,
               height: 96,
               child: CustomPaint(
-                  painter: _RingPainter(pct / 100, pctColor),
+                  painter: _RingPainter(pct / 100, s.color),
                   child: Center(
                       child: Text('$pct%',
-                          style: AppText.display(22, color: pctColor))))),
+                          style: AppText.display(22, color: s.color))))),
           const SizedBox(height: 8),
           Container(
               width: 40,
               height: 40,
               decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(10),
-                  color: pctColor.withValues(alpha: 0.10),
-                  border: Border.all(color: pctColor.withValues(alpha: 0.30))),
+                  color: s.color.withValues(alpha: 0.10),
+                  border: Border.all(color: s.color.withValues(alpha: 0.30))),
               child: Center(
-                  child: Text(grade,
-                      style: AppText.display(20, color: pctColor)))),
+                  child:
+                      Text(grade, style: AppText.display(20, color: s.color)))),
         ]),
       ]),
     );
@@ -378,6 +372,7 @@ class _ManualSessionDetailScreenState extends State<ManualSessionDetailScreen>
       Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         _sectionLabel('COURT POSITION'),
         BasketballCourtMap(
+          themeColor: s.color,
           mode: s.mode == SessionMode.position
               ? CourtMapMode.setup
               : CourtMapMode.range,
@@ -448,7 +443,7 @@ class _ManualSessionDetailScreenState extends State<ManualSessionDetailScreen>
                                 style: AppText.ui(12, color: AppColors.text2)),
                             Text('$pct%',
                                 style: AppText.ui(13,
-                                    weight: FontWeight.w700, color: pctColor)),
+                                    weight: FontWeight.w700, color: s.color)),
                           ]),
                       const SizedBox(height: 6),
                       ClipRRect(
@@ -456,7 +451,7 @@ class _ManualSessionDetailScreenState extends State<ManualSessionDetailScreen>
                           child: LinearProgressIndicator(
                               value: pct / 100,
                               backgroundColor: AppColors.borderSub,
-                              valueColor: AlwaysStoppedAnimation(pctColor),
+                              valueColor: AlwaysStoppedAnimation(s.color),
                               minHeight: 7)),
                     ])),
               ]),
@@ -496,24 +491,24 @@ class _ManualSessionDetailScreenState extends State<ManualSessionDetailScreen>
                   padding:
                       const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                   decoration: BoxDecoration(
-                      color: pctColor.withValues(alpha: 0.07),
+                      color: s.color.withValues(alpha: 0.07),
                       borderRadius: BorderRadius.circular(10),
                       border:
-                          Border.all(color: pctColor.withValues(alpha: 0.20))),
+                          Border.all(color: s.color.withValues(alpha: 0.20))),
                   child: Row(children: [
                     Icon(
                         pct >= s.globalAvgPct
                             ? Icons.arrow_upward_rounded
                             : Icons.arrow_downward_rounded,
                         size: 16,
-                        color: pctColor),
+                        color: s.color),
                     const SizedBox(width: 8),
                     Expanded(
                         child: Text(
                       pct >= s.globalAvgPct
                           ? 'Above average by ${pct - s.globalAvgPct}% — great session!'
                           : 'Below average by ${s.globalAvgPct - pct}% — keep training!',
-                      style: AppText.ui(12, color: pctColor),
+                      style: AppText.ui(12, color: s.color),
                     )),
                   ])),
             ])),

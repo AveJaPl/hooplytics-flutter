@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../main.dart';
 import '../services/auth_service.dart';
 import 'session_setup_screen.dart';
@@ -19,28 +20,25 @@ class DashboardScreen extends StatefulWidget {
 class _DashboardScreenState extends State<DashboardScreen>
     with TickerProviderStateMixin {
   int _navIndex = 0;
+  int _chartPeriod = 0;
 
   late final AnimationController _entryCtrl = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 650),
-  )..forward();
+      vsync: this, duration: const Duration(milliseconds: 650))
+    ..forward();
 
   final _authService = AuthService();
   final _sessionService = SessionService();
-  int _chartPeriod = 0; // 0 = 7D, 1 = 6M
   late Future<Map<String, dynamic>> _statsFuture;
 
   @override
   void initState() {
     super.initState();
-    _loadStats();
+    _statsFuture = _sessionService.getStatsData();
   }
 
-  void _loadStats() {
-    setState(() {
-      _statsFuture = _sessionService.getStatsData();
-    });
-  }
+  void _reload() => setState(() {
+        _statsFuture = _sessionService.getStatsData();
+      });
 
   @override
   void dispose() {
@@ -61,38 +59,27 @@ class _DashboardScreenState extends State<DashboardScreen>
   @override
   Widget build(BuildContext context) {
     final fade = CurvedAnimation(parent: _entryCtrl, curve: Curves.easeOut);
-    final slide = Tween(
-      begin: 16.0,
-      end: 0.0,
-    ).animate(CurvedAnimation(parent: _entryCtrl, curve: Curves.easeOutCubic));
-
+    final slide = Tween(begin: 16.0, end: 0.0).animate(
+        CurvedAnimation(parent: _entryCtrl, curve: Curves.easeOutCubic));
     return Scaffold(
       backgroundColor: AppColors.bg,
-      body: Stack(
-        children: [
-          FadeTransition(
-            opacity: fade,
-            child: AnimatedBuilder(
-              animation: slide,
-              builder: (_, child) => Transform.translate(
-                offset: Offset(0, slide.value),
-                child: child,
-              ),
-              child: _buildCurrentTab(),
-            ),
+      body: Stack(children: [
+        FadeTransition(
+          opacity: fade,
+          child: AnimatedBuilder(
+            animation: slide,
+            builder: (_, child) => Transform.translate(
+                offset: Offset(0, slide.value), child: child),
+            child: _tabBody(),
           ),
-          Positioned(bottom: 0, left: 0, right: 0, child: _buildNav()),
-        ],
-      ),
+        ),
+        Positioned(bottom: 0, left: 0, right: 0, child: _nav()),
+      ]),
     );
   }
 
-  // ── Tab Routing ─────────────────────────────────────────────────────────────
-
-  Widget _buildCurrentTab() {
+  Widget _tabBody() {
     switch (_navIndex) {
-      case 0:
-        return _buildHomeTab();
       case 1:
         return const TrainScreen();
       case 2:
@@ -102,317 +89,330 @@ class _DashboardScreenState extends State<DashboardScreen>
       case 4:
         return const ProfileScreen();
       default:
-        return _buildHomeTab();
+        return _homeTab();
     }
   }
 
-  // ── Home Tab ────────────────────────────────────────────────────────────────
+  // ══════════════════════════════════════════════════════════════════════════
+  //  HOME TAB
+  // ══════════════════════════════════════════════════════════════════════════
 
-  Widget _buildHomeTab() {
+  Widget _homeTab() {
     return FutureBuilder<Map<String, dynamic>>(
       future: _statsFuture,
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return Column(
-            children: [
-              _buildTopBar(0),
-              const Expanded(
-                  child: Center(
-                      child: CircularProgressIndicator(color: AppColors.gold))),
-            ],
-          );
-        }
-
-        if (snapshot.hasError) {
-          return Column(
-            children: [
-              _buildTopBar(0),
-              Expanded(
+      builder: (context, snap) {
+        if (snap.connectionState == ConnectionState.waiting) {
+          return Column(children: [
+            _topBar(0),
+            const Expanded(
                 child: Center(
-                  child: Text('Error loading dashboard: ${snapshot.error}',
-                      style: AppText.ui(14, color: AppColors.red)),
-                ),
-              ),
-            ],
-          );
+                    child: CircularProgressIndicator(color: AppColors.gold))),
+          ]);
+        }
+        if (snap.hasError) {
+          return Column(children: [
+            _topBar(0),
+            Expanded(
+                child: Center(
+                    child: Text('${snap.error}',
+                        style: AppText.ui(13, color: AppColors.red)))),
+          ]);
         }
 
-        final d = snapshot.data ?? {};
+        final d = snap.data ?? {};
         final streak = d['currentStreak'] as int? ?? 0;
+        final weekPct = List<double>.from(d['weekPct'] ?? []);
+        final weekLabels = List<String>.from(d['weekLabels'] ?? []);
+        final monthPct = List<double>.from(d['monthPct'] ?? []);
+        final monthLabels = List<String>.from(d['monthLabels'] ?? []);
+        final weeklyMade = d['weeklyMade'] as int? ?? 0;
 
-        return Column(
-          children: [
-            _buildTopBar(streak),
-            Expanded(
+        return Column(children: [
+          _topBar(streak),
+          Expanded(
               child: RefreshIndicator(
-                onRefresh: () async {
-                  _loadStats();
-                  await _statsFuture;
-                },
-                color: AppColors.gold,
-                backgroundColor: AppColors.surface,
-                child: SingleChildScrollView(
-                  physics: const AlwaysScrollableScrollPhysics(
-                      parent: BouncingScrollPhysics()),
-                  padding: const EdgeInsets.only(bottom: 100),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const SizedBox(height: 28),
-                      _buildSectionLabel('QUICK START', padding: true),
-                      const SizedBox(height: 14),
-                      _buildQuickStart(),
-                      const SizedBox(height: 28),
-                      _buildSectionLabel('TREND', padding: true),
-                      const SizedBox(height: 14),
-                      _trendChart(
-                        List<double>.from(d['weekPct'] ?? []),
-                        List<String>.from(d['weekLabels'] ?? []),
-                        List<double>.from(d['monthPct'] ?? []),
-                        List<String>.from(d['monthLabels'] ?? []),
-                      ),
-                      const SizedBox(height: 28),
-                      _buildSectionLabel('CONSISTENCY', padding: true),
-                      const SizedBox(height: 14),
-                      _calendarHeatmap(
-                        (d['calendarData'] as List? ?? [])
-                            .map((row) => List<double>.from(row as List))
-                            .toList(),
-                        (d['consistencyScore'] ?? 0.0).toDouble(),
-                      ),
-                      const SizedBox(height: 28),
-                    ],
-                  ),
-                ),
-              ),
+            onRefresh: () async {
+              _reload();
+              await _statsFuture;
+            },
+            color: AppColors.gold,
+            backgroundColor: AppColors.surface,
+            child: SingleChildScrollView(
+              physics: const AlwaysScrollableScrollPhysics(
+                  parent: BouncingScrollPhysics()),
+              padding: const EdgeInsets.only(bottom: 100),
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const SizedBox(height: 16),
+
+                    const SizedBox(height: 16),
+
+                    // 1. Log session
+                    _label('LOG SESSION'),
+                    const SizedBox(height: 12),
+                    _logActions(),
+                    const SizedBox(height: 28),
+
+                    // 2. Weekly goal
+                    _weeklyGoal(weeklyMade),
+                    const SizedBox(height: 28),
+
+                    // 3. Accuracy trend
+                    _label('ACCURACY TREND'),
+                    const SizedBox(height: 12),
+                    _trendChart(weekPct, weekLabels, monthPct, monthLabels),
+                    const SizedBox(height: 28),
+
+                    // 4. Consistency calendar
+                    _label('CONSISTENCY'),
+                    const SizedBox(height: 12),
+                    _calendarHeatmap(
+                      (d['calendarData'] as List? ?? [])
+                          .map((r) => List<double>.from(r as List))
+                          .toList(),
+                      (d['consistencyScore'] ?? 0.0).toDouble(),
+                    ),
+                    const SizedBox(height: 28),
+
+                    // 5. Quote of the day
+                    _quoteOfTheDay(),
+                    const SizedBox(height: 28),
+                  ]),
             ),
-          ],
-        );
+          )),
+        ]);
       },
     );
   }
 
-  // ── Top Bar ─────────────────────────────────────────────────────────────────
+  // ══════════════════════════════════════════════════════════════════════════
+  //  TOP BAR
+  // ══════════════════════════════════════════════════════════════════════════
 
-  Widget _buildTopBar(int streak) {
-    return SafeArea(
-      bottom: false,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(24, 20, 24, 0),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'GOOD EVENING',
-                  style: AppText.ui(
-                    11,
-                    color: AppColors.text2,
-                    letterSpacing: 1.4,
-                    weight: FontWeight.w800,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(_userName, style: AppText.ui(24, weight: FontWeight.w800)),
-              ],
-            ),
+  Widget _topBar(int streak) => SafeArea(
+        bottom: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(24, 20, 24, 0),
+          child: Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
+            Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('GOOD EVENING',
+                  style: AppText.ui(11,
+                      color: AppColors.text2,
+                      letterSpacing: 1.4,
+                      weight: FontWeight.w800)),
+              const SizedBox(height: 2),
+              Text(_userName, style: AppText.ui(24, weight: FontWeight.w800)),
+            ]),
             const Spacer(),
-            if (streak > 0) ...[
+            if (streak > 0)
               Container(
                 padding:
                     const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                 decoration: BoxDecoration(
                   color: AppColors.goldSoft,
-                  border: Border.all(
-                    color: AppColors.gold.withValues(alpha: 0.25),
-                  ),
+                  border:
+                      Border.all(color: AppColors.gold.withValues(alpha: 0.25)),
                   borderRadius: BorderRadius.circular(20),
                 ),
-                child: Row(
-                  children: [
-                    Container(
+                child: Row(children: [
+                  Container(
                       width: 6,
                       height: 6,
                       decoration: const BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: AppColors.gold,
-                      ),
-                    ),
-                    const SizedBox(width: 7),
-                    Text(
-                      '$streak day streak',
-                      style: AppText.ui(
-                        12,
-                        weight: FontWeight.w600,
-                        color: AppColors.gold,
-                      ),
-                    ),
-                  ],
-                ),
+                          shape: BoxShape.circle, color: AppColors.gold)),
+                  const SizedBox(width: 7),
+                  Text('$streak day streak',
+                      style: AppText.ui(12,
+                          weight: FontWeight.w600, color: AppColors.gold)),
+                ]),
               ),
-            ],
-          ],
+          ]),
         ),
-      ),
-    );
-  }
-
-  // ── Hero Card ───────────────────────────────────────────────────────────────
-
-  // ── Quick Start ──────────────────────────────────────────────────────────────
-
-  Widget _buildQuickStart() {
-    final cards = [
-      _QCard(
-        'NEW SESSION',
-        Icons.add_rounded,
-        AppColors.gold,
-        AppColors.goldSoft,
-        onTap: () => Navigator.of(context).push(
-          PageRouteBuilder(
-            pageBuilder: (_, __, ___) => const SessionSetupScreen(),
-            transitionDuration: const Duration(milliseconds: 400),
-            transitionsBuilder: (_, a, __, child) => FadeTransition(
-              opacity: CurvedAnimation(parent: a, curve: Curves.easeOut),
-              child: SlideTransition(
-                position: Tween(
-                  begin: const Offset(0, 0.04),
-                  end: Offset.zero,
-                ).animate(
-                    CurvedAnimation(parent: a, curve: Curves.easeOutCubic)),
-                child: child,
-              ),
-            ),
-          ),
-        ),
-      ),
-      _QCard(
-        'MANUAL ENTRY',
-        Icons.edit_note_rounded,
-        AppColors.blue,
-        AppColors.blueSoft,
-        onTap: () => Navigator.of(context).push(
-          MaterialPageRoute(builder: (_) => const ManualEntryScreen()),
-        ),
-      ),
-    ];
-    return SizedBox(
-      height: 100,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 24),
-        separatorBuilder: (_, __) => const SizedBox(width: 12),
-        itemCount: cards.length,
-        itemBuilder: (_, i) => _QuickCard(
-          card: cards[i],
-          width: MediaQuery.of(context).size.width / 2 - 30,
-        ),
-      ),
-    );
-  }
-
-  // ── Bottom Nav ──────────────────────────────────────────────────────────────
-
-  Widget _buildNav() {
-    final items = [
-      const _Nav(Icons.home_outlined, Icons.home_rounded, 'Home'),
-      const _Nav(
-        Icons.sports_basketball_outlined,
-        Icons.sports_basketball_rounded,
-        'Train',
-      ),
-      const _Nav(Icons.show_chart_rounded, Icons.show_chart_rounded, 'Stats'),
-      const _Nav(Icons.history_rounded, Icons.history_rounded, 'History'),
-      const _Nav(Icons.person_outline_rounded, Icons.person_rounded, 'Profile'),
-    ];
-
-    return Container(
-      height: 76,
-      decoration: const BoxDecoration(
-        color: AppColors.surface,
-        border: Border(top: BorderSide(color: AppColors.border)),
-      ),
-      child: Row(
-        children: List.generate(items.length, (i) {
-          final active = _navIndex == i;
-          return Expanded(
-            child: GestureDetector(
-              onTap: () => setState(() => _navIndex = i),
-              behavior: HitTestBehavior.opaque,
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(
-                    active ? items[i].activeIcon : items[i].icon,
-                    size: 22,
-                    color: active ? AppColors.gold : AppColors.text2,
-                  ),
-                  const SizedBox(height: 5),
-                  Text(
-                    items[i].label,
-                    style: AppText.ui(
-                      12,
-                      weight: active ? FontWeight.w600 : FontWeight.w400,
-                      color: active ? AppColors.gold : AppColors.text2,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          );
-        }),
-      ),
-    );
-  }
-
-  // ── Helpers ──────────────────────────────────────────────────────────────────
-
-  Widget _buildSectionLabel(
-    String label, {
-    bool header = false,
-    bool padding = false,
-  }) {
-    Widget content = Row(
-      children: [
-        Text(
-          label,
-          style: AppText.ui(
-            11,
-            weight: FontWeight.w800,
-            color: AppColors.text2,
-            letterSpacing: 1.4,
-          ),
-        ),
-        if (header) ...[
-          const Spacer(),
-          Text(
-            'See all',
-            style: AppText.ui(
-              12,
-              color: AppColors.gold,
-              weight: FontWeight.w500,
-            ),
-          ),
-        ],
-      ],
-    );
-    if (padding) {
-      content = Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 24),
-        child: content,
       );
-    }
-    return content;
+
+  // ══════════════════════════════════════════════════════════════════════════
+  //  1. LOG SESSION CARDS
+  // ══════════════════════════════════════════════════════════════════════════
+
+  Widget _logActions() => Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 24),
+        child: IntrinsicHeight(
+          child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            Expanded(
+                child: _LogCard(
+              onTap: () {
+                HapticFeedback.mediumImpact();
+                Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                        builder: (_) => const SessionSetupScreen()));
+              },
+              gradient: const LinearGradient(
+                  colors: [Color(0xFFD4A843), Color(0xFF9A6F1F)],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight),
+              shadowColor: AppColors.gold.withValues(alpha: 0.28),
+              watermarkIcon: Icons.sports_basketball_rounded,
+              watermarkAlpha: 0.16,
+              iconWidget: Container(
+                width: 34,
+                height: 34,
+                decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.20),
+                    borderRadius: BorderRadius.circular(10)),
+                child: const Icon(Icons.play_arrow_rounded,
+                    size: 20, color: Colors.white),
+              ),
+              title: 'Live Session',
+              titleColor: Colors.white,
+              subtitle: 'Track in real time',
+              subtitleColor: Colors.white.withValues(alpha: 0.60),
+            )),
+            const SizedBox(width: 12),
+            Expanded(
+                child: _LogCard(
+              onTap: () {
+                HapticFeedback.lightImpact();
+                Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                        builder: (_) => const ManualEntryScreen()));
+              },
+              bgColor: AppColors.surface,
+              borderColor: AppColors.border,
+              watermarkIcon: Icons.edit_note_rounded,
+              watermarkAlpha: 0.18,
+              iconWidget: Container(
+                width: 34,
+                height: 34,
+                decoration: BoxDecoration(
+                    color: AppColors.surfaceHi,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: AppColors.border)),
+                child: const Icon(Icons.edit_rounded,
+                    size: 17, color: AppColors.text2),
+              ),
+              title: 'Manual Entry',
+              titleColor: AppColors.text1,
+              subtitle: 'Log a past session',
+              subtitleColor: AppColors.text3,
+            )),
+          ]),
+        ),
+      );
+
+  // ══════════════════════════════════════════════════════════════════════════
+  //  2. WEEKLY GOAL
+  // ══════════════════════════════════════════════════════════════════════════
+
+  static const _weeklyTarget = 200;
+
+  Widget _weeklyGoal(int made) {
+    final pct = (made / _weeklyTarget).clamp(0.0, 1.0);
+    final left = math.max(0, _weeklyTarget - made);
+    final done = made >= _weeklyTarget;
+    final daysLeft = math.max(0, 7 - DateTime.now().weekday);
+
+    final motivation = done
+        ? 'Goal smashed! Consider raising the bar 🏆'
+        : pct >= 0.75
+            ? '$left more makes to close the week strong.'
+            : daysLeft > 0
+                ? '$daysLeft days left — ~${(left / daysLeft).round()} makes/day to go.'
+                : 'Last chance today — $left makes to go!';
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 24),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        _label('WEEKLY GOAL'),
+        const SizedBox(height: 12),
+        Container(
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            color: AppColors.surface,
+            border: Border.all(color: AppColors.border),
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Row(children: [
+              Text('MAKES THIS WEEK',
+                  style: AppText.ui(10,
+                      color: AppColors.text3,
+                      letterSpacing: 1.4,
+                      weight: FontWeight.w700)),
+              const Spacer(),
+              if (done)
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: AppColors.green.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(7),
+                    border: Border.all(
+                        color: AppColors.green.withValues(alpha: 0.28)),
+                  ),
+                  child: Text('DONE ✓',
+                      style: AppText.ui(9,
+                          weight: FontWeight.w800, color: AppColors.green)),
+                )
+              else
+                Text('$daysLeft days left',
+                    style: AppText.ui(11, color: AppColors.text3)),
+            ]),
+            const SizedBox(height: 14),
+            Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
+              Text('$made',
+                  style: AppText.display(48,
+                      color: done ? AppColors.green : AppColors.text1)),
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8, left: 6),
+                child: Text('/ $_weeklyTarget',
+                    style: AppText.ui(18,
+                        color: AppColors.text3, weight: FontWeight.w600)),
+              ),
+              const Spacer(),
+              Text('${(pct * 100).round()}%',
+                  style: AppText.ui(15,
+                      weight: FontWeight.w700,
+                      color: done ? AppColors.green : AppColors.gold)),
+            ]),
+            const SizedBox(height: 12),
+            Row(
+                children: List.generate(10, (i) {
+              final filled = (pct * 10).round();
+              return Expanded(
+                  child: Padding(
+                padding: EdgeInsets.only(right: i < 9 ? 3 : 0),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 300),
+                  height: 7,
+                  decoration: BoxDecoration(
+                    color: i < filled
+                        ? (done ? AppColors.green : AppColors.gold)
+                        : AppColors.borderSub,
+                    borderRadius: BorderRadius.circular(3),
+                  ),
+                ),
+              ));
+            })),
+            const SizedBox(height: 12),
+            Text(motivation, style: AppText.ui(12, color: AppColors.text2)),
+          ]),
+        ),
+      ]),
+    );
   }
 
-  // ── Trend Chart ─────────────────────────────────────────────────────────────
+  // ══════════════════════════════════════════════════════════════════════════
+  //  3. ACCURACY TREND
+  // ══════════════════════════════════════════════════════════════════════════
 
-  Widget _trendChart(List<double> weekPct, List<String> weekLabels,
-      List<double> monthPct, List<String> monthLabels) {
-    final data = _chartPeriod == 0 ? weekPct : monthPct;
-    final labels = _chartPeriod == 0 ? weekLabels : monthLabels;
+  Widget _trendChart(List<double> wPct, List<String> wLbl, List<double> mPct,
+      List<String> mLbl) {
+    final data = _chartPeriod == 0 ? wPct : mPct;
+    final labels = _chartPeriod == 0 ? wLbl : mLbl;
     final hasData = data.any((v) => v > 0);
 
     return Padding(
@@ -423,7 +423,7 @@ class _DashboardScreenState extends State<DashboardScreen>
           border: Border.all(color: AppColors.border),
           borderRadius: BorderRadius.circular(20),
         ),
-        child: Column(children: [
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Padding(
             padding: const EdgeInsets.fromLTRB(20, 16, 16, 0),
             child: Row(children: [
@@ -434,9 +434,8 @@ class _DashboardScreenState extends State<DashboardScreen>
                 height: 30,
                 padding: const EdgeInsets.all(3),
                 decoration: BoxDecoration(
-                  color: AppColors.bg,
-                  borderRadius: BorderRadius.circular(8),
-                ),
+                    color: AppColors.bg,
+                    borderRadius: BorderRadius.circular(8)),
                 child: Row(children: [
                   _PeriodBtn('7D', _chartPeriod == 0,
                       () => setState(() => _chartPeriod = 0)),
@@ -446,10 +445,9 @@ class _DashboardScreenState extends State<DashboardScreen>
               ),
             ]),
           ),
-          const SizedBox(height: 6),
           if (hasData) ...[
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20),
+              padding: const EdgeInsets.fromLTRB(20, 6, 20, 0),
               child: Row(children: [
                 Text(
                     '${(data.where((v) => v > 0).reduce(math.min) * 100).round()}% low',
@@ -459,86 +457,90 @@ class _DashboardScreenState extends State<DashboardScreen>
                     style: AppText.ui(11, color: AppColors.green)),
               ]),
             ),
-            const SizedBox(height: 4),
             SizedBox(
-              height: 160,
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
-                child: CustomPaint(
-                  painter: _LineChartPainter(data: data, labels: labels),
-                  size: Size.infinite,
-                ),
-              ),
-            ),
+                height: 160,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+                  child: CustomPaint(
+                      painter: _LineChartPainter(data: data, labels: labels),
+                      size: Size.infinite),
+                )),
           ] else
             Padding(
               padding: const EdgeInsets.all(24),
               child: Center(
-                child: Text('No shooting data for this period',
-                    style: AppText.ui(13, color: AppColors.text3)),
-              ),
+                  child: Text('No data yet',
+                      style: AppText.ui(13, color: AppColors.text3))),
             ),
         ]),
       ),
     );
   }
 
-// ── Consistency Calendar ──────────────────────────────────────────────────
+  // ══════════════════════════════════════════════════════════════════════════
+  //  4. CONSISTENCY CALENDAR
+  // ══════════════════════════════════════════════════════════════════════════
 
-  Widget _calendarHeatmap(
-      List<List<double>> calendarData, double consistencyScore) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 24),
-      child: Container(
-        padding: const EdgeInsets.all(20),
-        decoration: BoxDecoration(
-          color: AppColors.surface,
-          border: Border.all(color: AppColors.border),
-          borderRadius: BorderRadius.circular(20),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
+  Widget _calendarHeatmap(List<List<double>> cal, double score) => Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 24),
+        child: Container(
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+              color: AppColors.surface,
+              border: Border.all(color: AppColors.border),
+              borderRadius: BorderRadius.circular(20)),
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Row(children: [
               Text(
-                  '${calendarData.expand((r) => r).where((v) => v > 0).length} sessions in 5 weeks',
+                  '${cal.expand((r) => r).where((v) => v > 0).length} sessions · 5 weeks',
                   style: AppText.ui(13, weight: FontWeight.w600)),
               const Spacer(),
-              _consistencyBadge(consistencyScore),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                    color: AppColors.greenSoft,
+                    borderRadius: BorderRadius.circular(8)),
+                child: Row(children: [
+                  Text('Consistency: ',
+                      style: AppText.ui(11, color: AppColors.text2)),
+                  Text('${(score * 100).round()}%',
+                      style: AppText.ui(11,
+                          weight: FontWeight.w700, color: AppColors.green)),
+                ]),
+              ),
             ]),
             const SizedBox(height: 16),
             Row(children: [
               const SizedBox(width: 8),
               ...['M', 'T', 'W', 'T', 'F', 'S', 'S'].map((d) => Expanded(
-                    child: Center(
-                        child: Text(d,
-                            style: AppText.ui(12,
-                                color: AppColors.text2,
-                                weight: FontWeight.w700))),
-                  )),
+                  child: Center(
+                      child: Text(d,
+                          style: AppText.ui(12,
+                              color: AppColors.text2,
+                              weight: FontWeight.w700))))),
             ]),
             const SizedBox(height: 8),
-            ...calendarData.map((week) => Padding(
+            ...cal.map((week) => Padding(
                   padding: const EdgeInsets.only(bottom: 6),
                   child: Row(children: [
                     const SizedBox(width: 8),
-                    ...week.map((val) => Expanded(
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 2),
-                            child: AspectRatio(
+                    ...week.map((v) => Expanded(
+                            child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 2),
+                          child: AspectRatio(
                               aspectRatio: 1,
                               child: Container(
                                 decoration: BoxDecoration(
                                   borderRadius: BorderRadius.circular(4),
-                                  color: val == 0
+                                  color: v == 0
                                       ? AppColors.borderSub
                                       : AppColors.gold
-                                          .withValues(alpha: 0.15 + 0.75 * val),
+                                          .withValues(alpha: 0.15 + 0.75 * v),
                                 ),
-                              ),
-                            ),
-                          ),
-                        )),
+                              )),
+                        ))),
                   ]),
                 )),
             const SizedBox(height: 12),
@@ -551,65 +553,259 @@ class _DashboardScreenState extends State<DashboardScreen>
                         height: 10,
                         margin: const EdgeInsets.only(left: 3),
                         decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(2),
-                          color: i == 0
-                              ? AppColors.borderSub
-                              : AppColors.gold
-                                  .withValues(alpha: 0.15 + 0.75 * (i / 4)),
-                        ),
+                            borderRadius: BorderRadius.circular(2),
+                            color: i == 0
+                                ? AppColors.borderSub
+                                : AppColors.gold
+                                    .withValues(alpha: 0.15 + 0.75 * (i / 4))),
                       )),
               Text(' More', style: AppText.ui(12, color: AppColors.text2)),
             ]),
-          ],
+          ]),
         ),
-      ),
-    );
-  }
+      );
 
-  Widget _consistencyBadge(double score) {
-    final scoreInt = (score * 100).round();
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-      decoration: BoxDecoration(
-        color: AppColors.greenSoft,
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Row(children: [
-        Text('Consistency: ', style: AppText.ui(11, color: AppColors.text2)),
-        Text('$scoreInt%',
-            style: AppText.ui(11,
-                weight: FontWeight.w700, color: AppColors.green)),
-      ]),
-    );
-  }
-}
+  // ══════════════════════════════════════════════════════════════════════════
+  //  5. QUOTE OF THE DAY  — at the bottom, changes daily
+  // ══════════════════════════════════════════════════════════════════════════
 
-// ── Sub Widgets ──────────────────────────────────────────────────────────────
+  static const _quotes = [
+    _Quote('"You miss 100% of the shots you don\'t take."', '— Wayne Gretzky'),
+    _Quote('"Hard work beats talent when talent doesn\'t work hard."',
+        '— Tim Notke'),
+    _Quote(
+        '"The only way to get better is to challenge yourself every single day."',
+        '— LeBron James'),
+    _Quote(
+        '"Talent wins games, but teamwork and intelligence wins championships."',
+        '— Michael Jordan'),
+    _Quote(
+        '"Excellence is not a singular act, but a habit. You are what you repeatedly do."',
+        '— Shaquille O\'Neal'),
+    _Quote('"I\'ve missed more than 9,000 shots. That\'s why I succeed."',
+        '— Michael Jordan'),
+    _Quote(
+        '"Push yourself again and again. Don\'t give an inch until the final buzzer sounds."',
+        '— Larry Bird'),
+    _Quote(
+        '"The strength of the team is each individual member. The strength of each member is the team."',
+        '— Phil Jackson'),
+    _Quote('"Be the hardest worker in the room. Every. Single. Day."',
+        '— Kobe Bryant'),
+    _Quote('"The more you sweat in practice, the less you bleed in the game."',
+        '— Coach K'),
+    _Quote(
+        '"Great players are willing to give up their own personal glory for the good of the team."',
+        '— Kareem Abdul-Jabbar'),
+    _Quote('"If you\'re afraid to fail, you\'ll never succeed."',
+        '— Charles Barkley'),
+    _Quote(
+        '"I can\'t relate to lazy people. We don\'t speak the same language."',
+        '— Kobe Bryant'),
+    _Quote(
+        '"One man can be a crucial ingredient on a team, but one man cannot make a team."',
+        '— Kareem Abdul-Jabbar'),
+  ];
 
-class _PeriodBtn extends StatelessWidget {
-  final String label;
-  final bool active;
-  final VoidCallback onTap;
-  const _PeriodBtn(this.label, this.active, this.onTap);
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 180),
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+  Widget _quoteOfTheDay() {
+    final dayIndex =
+        DateTime.now().difference(DateTime(DateTime.now().year)).inDays;
+    final quote = _quotes[dayIndex % _quotes.length];
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 24),
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(24, 24, 24, 20),
         decoration: BoxDecoration(
-          color: active ? AppColors.gold : Colors.transparent,
-          borderRadius: BorderRadius.circular(5),
+          color: AppColors.surface,
+          border: Border.all(color: AppColors.border),
+          borderRadius: BorderRadius.circular(22),
         ),
-        child: Text(label,
-            style: AppText.ui(11,
-                weight: FontWeight.w700,
-                color: active ? AppColors.bg : AppColors.text3)),
+        child: Stack(children: [
+          Positioned(
+            top: -8,
+            right: -4,
+            child: Text('"',
+                style: TextStyle(
+                  fontFamily: 'Georgia',
+                  fontSize: 96,
+                  height: 1,
+                  color: AppColors.gold.withValues(alpha: 0.08),
+                  fontWeight: FontWeight.w900,
+                )),
+          ),
+          Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(children: [
+                  Container(
+                    width: 18,
+                    height: 2,
+                    decoration: BoxDecoration(
+                      color: AppColors.gold,
+                      borderRadius: BorderRadius.circular(1),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Text('QUOTE OF THE DAY',
+                      style: AppText.ui(9,
+                          color: AppColors.gold,
+                          letterSpacing: 1.6,
+                          weight: FontWeight.w800)),
+                ]),
+                const SizedBox(height: 18),
+                Text(
+                  quote.text,
+                  style: const TextStyle(
+                    fontFamily: 'Georgia',
+                    fontSize: 17,
+                    height: 1.55,
+                    color: AppColors.text1,
+                    fontStyle: FontStyle.italic,
+                  ),
+                ),
+                const SizedBox(height: 14),
+                Text(quote.author,
+                    style: AppText.ui(12,
+                        color: AppColors.text2, weight: FontWeight.w600)),
+              ]),
+        ]),
       ),
     );
   }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  //  BOTTOM NAV
+  // ══════════════════════════════════════════════════════════════════════════
+
+  Widget _nav() {
+    final items = [
+      const _Nav(Icons.home_outlined, Icons.home_rounded, 'Home'),
+      const _Nav(Icons.sports_basketball_outlined,
+          Icons.sports_basketball_rounded, 'Train'),
+      const _Nav(Icons.show_chart_rounded, Icons.show_chart_rounded, 'Stats'),
+      const _Nav(Icons.history_rounded, Icons.history_rounded, 'History'),
+      const _Nav(Icons.person_outline_rounded, Icons.person_rounded, 'Profile'),
+    ];
+    return Container(
+      height: 76,
+      decoration: const BoxDecoration(
+          color: AppColors.surface,
+          border: Border(top: BorderSide(color: AppColors.border))),
+      child: Row(
+          children: List.generate(items.length, (i) {
+        final active = _navIndex == i;
+        return Expanded(
+            child: GestureDetector(
+          onTap: () => setState(() => _navIndex = i),
+          behavior: HitTestBehavior.opaque,
+          child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+            Icon(active ? items[i].activeIcon : items[i].icon,
+                size: 22, color: active ? AppColors.gold : AppColors.text2),
+            const SizedBox(height: 5),
+            Text(items[i].label,
+                style: AppText.ui(12,
+                    weight: active ? FontWeight.w600 : FontWeight.w400,
+                    color: active ? AppColors.gold : AppColors.text2)),
+          ]),
+        ));
+      })),
+    );
+  }
+
+  Widget _label(String t) => Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 24),
+        child: Text(t,
+            style: AppText.ui(11,
+                color: AppColors.text2,
+                letterSpacing: 1.4,
+                weight: FontWeight.w800)),
+      );
 }
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  LOG CARD
+// ══════════════════════════════════════════════════════════════════════════════
+
+class _LogCard extends StatelessWidget {
+  final VoidCallback onTap;
+  final Gradient? gradient;
+  final Color? bgColor;
+  final Color borderColor;
+  final Color? shadowColor;
+  final IconData watermarkIcon;
+  final double watermarkAlpha;
+  final Widget iconWidget;
+  final String title, subtitle;
+  final Color titleColor, subtitleColor;
+
+  const _LogCard({
+    required this.onTap,
+    this.gradient,
+    this.bgColor,
+    this.borderColor = Colors.transparent,
+    this.shadowColor,
+    required this.watermarkIcon,
+    this.watermarkAlpha = 0.14,
+    required this.iconWidget,
+    required this.title,
+    required this.titleColor,
+    required this.subtitle,
+    required this.subtitleColor,
+  });
+
+  @override
+  Widget build(BuildContext context) => GestureDetector(
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            gradient: gradient,
+            color: bgColor,
+            border: Border.all(color: borderColor, width: 1.5),
+            borderRadius: BorderRadius.circular(18),
+            boxShadow: shadowColor != null
+                ? [
+                    BoxShadow(
+                        color: shadowColor!,
+                        blurRadius: 18,
+                        offset: const Offset(0, 6))
+                  ]
+                : null,
+          ),
+          child: Stack(children: [
+            Positioned(
+                right: -16,
+                bottom: -16,
+                child: Icon(watermarkIcon,
+                    size: 90,
+                    color: Colors.white.withValues(alpha: watermarkAlpha))),
+            Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  iconWidget,
+                  const SizedBox(height: 20),
+                  Text(title,
+                      style: AppText.ui(14,
+                          weight: FontWeight.w800, color: titleColor),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis),
+                  const SizedBox(height: 3),
+                  Text(subtitle,
+                      style: AppText.ui(11, color: subtitleColor),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis),
+                ]),
+          ]),
+        ),
+      );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  LINE CHART PAINTER
+// ══════════════════════════════════════════════════════════════════════════════
 
 class _LineChartPainter extends CustomPainter {
   final List<double> data;
@@ -619,95 +815,78 @@ class _LineChartPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     if (data.isEmpty) return;
-
-    const padLeft = 32.0;
-    const padBottom = 24.0;
-    const padTop = 12.0;
-    final chartW = size.width - padLeft;
-    final chartH = size.height - padBottom - padTop;
-
+    const padL = 32.0, padB = 24.0, padT = 12.0;
+    final cW = size.width - padL;
+    final cH = size.height - padB - padT;
     final minV = (data.reduce(math.min) - 0.05).clamp(0.0, 1.0);
     final maxV = (data.reduce(math.max) + 0.05).clamp(0.0, 1.0);
     final range = maxV - minV;
 
-    double dx(int i) => padLeft + i * chartW / (data.length - 1);
-    double dy(double v) => padTop + (1 - (v - minV) / range) * chartH;
+    double dx(int i) => padL + i * cW / (data.length - 1);
+    double dy(double v) => padT + (1 - (v - minV) / range) * cH;
 
-    // Horizontal guides
-    final guidePaint = Paint()
+    final guide = Paint()
       ..color = AppColors.borderSub
       ..strokeWidth = 1;
     for (int g = 0; g <= 4; g++) {
-      final y = padTop + g * chartH / 4;
-      canvas.drawLine(Offset(padLeft, y), Offset(size.width, y), guidePaint);
-      final val = (maxV - g * range / 4) * 100;
+      final y = padT + g * cH / 4;
+      canvas.drawLine(Offset(padL, y), Offset(size.width, y), guide);
       final tp = TextPainter(
         text: TextSpan(
-            text: '${val.round()}',
+            text: '${((maxV - g * range / 4) * 100).round()}',
             style: const TextStyle(color: AppColors.text3, fontSize: 9)),
         textDirection: TextDirection.ltr,
       )..layout();
       tp.paint(canvas, Offset(0, y - tp.height / 2));
     }
 
-    // Gradient area under curve
-    final areaPath = Path();
-    areaPath.moveTo(dx(0), dy(data[0]));
-    for (int i = 1; i < data.length; i++) {
-      final cp1 = Offset((dx(i - 1) + dx(i)) / 2, dy(data[i - 1]));
-      final cp2 = Offset((dx(i - 1) + dx(i)) / 2, dy(data[i]));
-      areaPath.cubicTo(cp1.dx, cp1.dy, cp2.dx, cp2.dy, dx(i), dy(data[i]));
+    Path buildPath() {
+      final p = Path()..moveTo(dx(0), dy(data[0]));
+      for (int i = 1; i < data.length; i++) {
+        final mid = (dx(i - 1) + dx(i)) / 2;
+        p.cubicTo(mid, dy(data[i - 1]), mid, dy(data[i]), dx(i), dy(data[i]));
+      }
+      return p;
     }
-    areaPath.lineTo(dx(data.length - 1), padTop + chartH);
-    areaPath.lineTo(dx(0), padTop + chartH);
-    areaPath.close();
 
+    final area = buildPath()
+      ..lineTo(dx(data.length - 1), padT + cH)
+      ..lineTo(dx(0), padT + cH)
+      ..close();
     canvas.drawPath(
-        areaPath,
+        area,
         Paint()
           ..shader = LinearGradient(
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
             colors: [
               AppColors.gold.withValues(alpha: 0.22),
-              AppColors.gold.withValues(alpha: 0.0)
+              AppColors.gold.withValues(alpha: 0)
             ],
-          ).createShader(Rect.fromLTWH(0, padTop, size.width, chartH)));
+          ).createShader(Rect.fromLTWH(0, padT, size.width, cH)));
 
-    // Line
-    final linePath = Path();
-    linePath.moveTo(dx(0), dy(data[0]));
-    for (int i = 1; i < data.length; i++) {
-      final cp1 = Offset((dx(i - 1) + dx(i)) / 2, dy(data[i - 1]));
-      final cp2 = Offset((dx(i - 1) + dx(i)) / 2, dy(data[i]));
-      linePath.cubicTo(cp1.dx, cp1.dy, cp2.dx, cp2.dy, dx(i), dy(data[i]));
-    }
+    final line = buildPath();
     canvas.drawPath(
-        linePath,
+        line,
+        Paint()
+          ..color = AppColors.gold.withValues(alpha: 0.20)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 8
+          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 5));
+    canvas.drawPath(
+        line,
         Paint()
           ..color = AppColors.gold
-          ..strokeWidth = 2.0
           ..style = PaintingStyle.stroke
+          ..strokeWidth = 2
           ..strokeCap = StrokeCap.round
           ..isAntiAlias = true);
 
-    // Dots + values
     for (int i = 0; i < data.length; i++) {
       final isLast = i == data.length - 1;
-      canvas.drawCircle(
-          Offset(dx(i), dy(data[i])),
-          isLast ? 5 : 3.5,
-          Paint()
-            ..color = isLast
-                ? AppColors.gold
-                : AppColors.gold.withValues(alpha: 0.6));
       if (isLast) {
         canvas.drawCircle(
-            Offset(dx(i), dy(data[i])),
-            5,
-            Paint()
-              ..color = AppColors.bg
-              ..style = PaintingStyle.fill);
+            Offset(dx(i), dy(data[i])), 5, Paint()..color = AppColors.bg);
         canvas.drawCircle(
             Offset(dx(i), dy(data[i])),
             5,
@@ -715,21 +894,20 @@ class _LineChartPainter extends CustomPainter {
               ..color = AppColors.gold
               ..style = PaintingStyle.stroke
               ..strokeWidth = 2);
+      } else {
+        canvas.drawCircle(Offset(dx(i), dy(data[i])), 3.5,
+            Paint()..color = AppColors.gold.withValues(alpha: 0.6));
       }
-
       final tp = TextPainter(
         text: TextSpan(
-          text: labels[i],
-          style: TextStyle(
-            color: isLast ? AppColors.gold : AppColors.text3,
-            fontSize: 10,
-            fontWeight: isLast ? FontWeight.w700 : FontWeight.w400,
-          ),
-        ),
+            text: labels[i],
+            style: TextStyle(
+                color: isLast ? AppColors.gold : AppColors.text3,
+                fontSize: 10,
+                fontWeight: isLast ? FontWeight.w700 : FontWeight.w400)),
         textDirection: TextDirection.ltr,
       )..layout();
-      tp.paint(
-          canvas, Offset(dx(i) - tp.width / 2, size.height - padBottom + 4));
+      tp.paint(canvas, Offset(dx(i) - tp.width / 2, size.height - padB + 4));
     }
   }
 
@@ -737,58 +915,37 @@ class _LineChartPainter extends CustomPainter {
   bool shouldRepaint(covariant _LineChartPainter old) => old.data != data;
 }
 
-class _QuickCard extends StatelessWidget {
-  final _QCard card;
-  final double width;
-  const _QuickCard({required this.card, this.width = 140});
+// ══════════════════════════════════════════════════════════════════════════════
+//  DATA MODELS & SMALL WIDGETS
+// ══════════════════════════════════════════════════════════════════════════════
 
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: card.onTap,
-      child: Container(
-        width: width,
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: card.bgColor,
-          border: Border.all(color: card.accentColor.withValues(alpha: 0.25)),
-          borderRadius: BorderRadius.circular(16),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Icon(card.icon, color: card.accentColor, size: 22),
-            const Spacer(),
-            Text(
-              card.label,
-              style: AppText.ui(
-                11,
-                weight: FontWeight.w700,
-                color: card.accentColor,
-                letterSpacing: 0.4,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
+class _Quote {
+  final String text, author;
+  const _Quote(this.text, this.author);
 }
 
-// Removed _SessionRow & _ZoneTile
-
-// ── Data Models ───────────────────────────────────────────────────────────────
-
-class _QCard {
+class _PeriodBtn extends StatelessWidget {
   final String label;
-  final IconData icon;
-  final Color accentColor, bgColor;
-  final VoidCallback? onTap;
-  const _QCard(this.label, this.icon, this.accentColor, this.bgColor,
-      {this.onTap});
+  final bool active;
+  final VoidCallback onTap;
+  const _PeriodBtn(this.label, this.active, this.onTap);
+  @override
+  Widget build(BuildContext context) => GestureDetector(
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+          decoration: BoxDecoration(
+            color: active ? AppColors.gold : Colors.transparent,
+            borderRadius: BorderRadius.circular(5),
+          ),
+          child: Text(label,
+              style: AppText.ui(11,
+                  weight: FontWeight.w700,
+                  color: active ? AppColors.bg : AppColors.text3)),
+        ),
+      );
 }
-
-// Removed _Zone
 
 class _Nav {
   final IconData icon, activeIcon;
