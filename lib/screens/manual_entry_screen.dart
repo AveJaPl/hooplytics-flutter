@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import '../main.dart';
 import '../utils/haptics.dart';
 import '../widgets/basketball_court_map.dart';
@@ -108,7 +107,7 @@ class _ManualEntryScreenState extends State<ManualEntryScreen>
   void _bumpMade(int d) {
     final v = (_made + d).clamp(0, 9999);
     if (v == _made) return;
-    HapticFeedback.selectionClick();
+    Haptics.selectionClick();
     setState(() => _made = v);
     _madeBounce.forward(from: 0);
   }
@@ -116,7 +115,7 @@ class _ManualEntryScreenState extends State<ManualEntryScreen>
   void _bumpSwishes(int d) {
     final v = (_swishes + d).clamp(0, 9999);
     if (v == _swishes) return;
-    HapticFeedback.selectionClick();
+    Haptics.selectionClick();
     setState(() => _swishes = v);
     _swishBounce.forward(from: 0);
   }
@@ -124,7 +123,7 @@ class _ManualEntryScreenState extends State<ManualEntryScreen>
   void _bumpMisses(int d) {
     final v = (_misses + d).clamp(0, 9999);
     if (v == _misses) return;
-    HapticFeedback.selectionClick();
+    Haptics.selectionClick();
     setState(() => _misses = v);
     _attBounce.forward(from: 0);
   }
@@ -283,14 +282,14 @@ class _ManualEntryScreenState extends State<ManualEntryScreen>
           ),
           child: Row(children: [
             _ModeTab('Position', _positionMode, () {
-              HapticFeedback.selectionClick();
+              Haptics.selectionClick();
               setState(() {
                 _positionMode = true;
                 _selectedId = 'free_throw';
               });
             }),
             _ModeTab('Range', !_positionMode, () {
-              HapticFeedback.selectionClick();
+              Haptics.selectionClick();
               setState(() {
                 _positionMode = false;
                 _selectedId = 'mid';
@@ -309,7 +308,7 @@ class _ManualEntryScreenState extends State<ManualEntryScreen>
           mode: _positionMode ? CourtMapMode.setup : CourtMapMode.range,
           selectedId: _selectedId,
           onSpotTap: (id) {
-            HapticFeedback.selectionClick();
+            Haptics.selectionClick();
             setState(() => _selectedId = id);
           },
           spots: _positionMode
@@ -377,9 +376,21 @@ class _ManualEntryScreenState extends State<ManualEntryScreen>
 
           // ── rows ─────────────────────────────────────────────────────
           _StepperRow(
+            label: 'Miss',
+            icon: Icons.highlight_off_rounded,
+            color: AppColors.red,
+            value: _misses,
+            scaleAnim: _attScale,
+            onInc: () => _bumpMisses(1),
+            onDec: () => _bumpMisses(-1),
+            onIncLong: () => _bumpMisses(5),
+            onDecLong: () => _bumpMisses(-5),
+            isLast: false,
+          ),
+          _StepperRow(
             label: 'Made',
             icon: Icons.check_circle_outline_rounded,
-            color: AppColors.green,
+            color: AppColors.gold,
             value: _made,
             scaleAnim: _madeScale,
             onInc: () => _bumpMade(1),
@@ -391,25 +402,13 @@ class _ManualEntryScreenState extends State<ManualEntryScreen>
           _StepperRow(
             label: 'Swish',
             icon: Icons.star_outline_rounded,
-            color: AppColors.gold,
+            color: AppColors.green,
             value: _swishes,
             scaleAnim: _swishScale,
             onInc: () => _bumpSwishes(1),
             onDec: () => _bumpSwishes(-1),
             onIncLong: () => _bumpSwishes(5),
             onDecLong: () => _bumpSwishes(-5),
-            isLast: false,
-          ),
-          _StepperRow(
-            label: 'Miss',
-            icon: Icons.highlight_off_rounded,
-            color: AppColors.red,
-            value: _misses,
-            scaleAnim: _attScale,
-            onInc: () => _bumpMisses(1),
-            onDec: () => _bumpMisses(-1),
-            onIncLong: () => _bumpMisses(5),
-            onDecLong: () => _bumpMisses(-5),
             isLast: true,
           ),
         ]),
@@ -481,12 +480,20 @@ class _ShotBar extends StatelessWidget {
       child: SizedBox(
         height: 6,
         child: Row(children: [
+          if (misses > 0)
+            Flexible(
+              flex: misses,
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 250),
+                color: AppColors.red,
+              ),
+            ),
           if (made > 0)
             Flexible(
               flex: made,
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 250),
-                color: AppColors.green,
+                color: AppColors.gold,
               ),
             ),
           if (swishes > 0)
@@ -494,15 +501,7 @@ class _ShotBar extends StatelessWidget {
               flex: swishes,
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 250),
-                color: AppColors.gold,
-              ),
-            ),
-          if (misses > 0)
-            Flexible(
-              flex: misses,
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 250),
-                color: AppColors.red,
+                color: AppColors.green,
               ),
             ),
         ]),

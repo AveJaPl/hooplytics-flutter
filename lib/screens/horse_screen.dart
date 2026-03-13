@@ -114,7 +114,7 @@ class _HorseScreenState extends State<HorseScreen>
         if (_gameOver) {
           setState(() {
             _phase = _HorsePhase.result;
-            _saveSession();
+            // Auto-save removed as per standardization request
             _entry.forward(from: 0);
           });
         } else {
@@ -539,39 +539,34 @@ class _HorseScreenState extends State<HorseScreen>
           Row(children: [
             Expanded(
                 child: GestureDetector(
-                    onTap: () {
-                      setState(() {
-                        _p1letters = 0;
-                        _p2letters = 0;
-                        _callerIndex = 0;
-                        _shotCtrl.clear();
-                        _phase = _HorsePhase.setup;
-                        _entry.forward(from: 0);
-                      });
-                    },
-                    child: Container(
-                        height: 50,
-                        decoration: BoxDecoration(
-                            border: Border.all(color: AppColors.border),
-                            borderRadius: BorderRadius.circular(12)),
-                        child: Center(
-                            child: Text('Play again',
-                                style: AppText.ui(14,
-                                    weight: FontWeight.w600,
-                                    color: AppColors.text2)))))),
-            const SizedBox(width: 12),
-            Expanded(
-                flex: 2,
-                child: GestureDetector(
                     onTap: () =>
                         Navigator.of(context).popUntil((r) => r.isFirst),
                     child: Container(
-                        height: 50,
+                        height: 52,
+                        decoration: BoxDecoration(
+                            color: AppColors.surfaceHi,
+                            borderRadius: BorderRadius.circular(14)),
+                        child: Center(
+                            child: Text('Discard',
+                                style: AppText.ui(14,
+                                    weight: FontWeight.w700,
+                                    color: AppColors.text2)))))),
+            const SizedBox(width: 12),
+            Expanded(
+                child: GestureDetector(
+                    onTap: () async {
+                      await _saveSession();
+                      if (mounted) {
+                        Navigator.of(context).popUntil((r) => r.isFirst);
+                      }
+                    },
+                    child: Container(
+                        height: 52,
                         decoration: BoxDecoration(
                             color: const Color(0xFFAA5EEF),
-                            borderRadius: BorderRadius.circular(12)),
+                            borderRadius: BorderRadius.circular(14)),
                         child: Center(
-                            child: Text('Done',
+                            child: Text('Save',
                                 style: AppText.ui(14,
                                     weight: FontWeight.w700,
                                     color: Colors.white)))))),

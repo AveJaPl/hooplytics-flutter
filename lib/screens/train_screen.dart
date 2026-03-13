@@ -1,7 +1,7 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import '../main.dart';
+import '../utils/haptics.dart';
 import 'session_setup_screen.dart';
 import 'three_point_contest_screen.dart';
 import 'duel_screen.dart';
@@ -238,13 +238,13 @@ class _TrainScreenState extends State<TrainScreen>
         padding: const EdgeInsets.fromLTRB(24, 20, 24, 0),
         child: Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
           Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text('GAME MODES',
+            Text('TRAIN',
                 style: AppText.ui(11,
                     color: AppColors.text2,
                     letterSpacing: 1.4,
                     weight: FontWeight.w800)),
             const SizedBox(height: 2),
-            Text('Train', style: AppText.ui(24, weight: FontWeight.w800)),
+            Text('Game Modes', style: AppText.ui(24, weight: FontWeight.w800)),
           ]),
         ]),
       );
@@ -260,7 +260,7 @@ class _TrainScreenState extends State<TrainScreen>
             return Expanded(
               child: GestureDetector(
                 onTap: () {
-                  HapticFeedback.selectionClick();
+                  Haptics.selectionClick();
                   setState(() => _filterIndex = i);
                 },
                 child: AnimatedContainer(
@@ -374,7 +374,7 @@ class _TrainScreenState extends State<TrainScreen>
       );
 
   void _launch(GameMode mode) {
-    HapticFeedback.mediumImpact();
+    Haptics.mediumImpact();
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,

@@ -158,7 +158,7 @@ class _ThreePointContestScreenState extends State<ThreePointContestScreen>
       return;
     }
 
-    _saveSession();
+
     Future.delayed(const Duration(milliseconds: 300), () {
       if (mounted) _showResult();
     });
@@ -257,25 +257,13 @@ class _ThreePointContestScreenState extends State<ThreePointContestScreen>
         score: _score,
         maxScore: _maxScore,
         made: _made,
-        onRetry: () {
-          Navigator.pop(context);
-          _restart();
+        onDiscard: () => Navigator.of(context).popUntil((r) => r.isFirst),
+        onSave: () async {
+          await _saveSession();
+          if (mounted) Navigator.of(context).popUntil((r) => r.isFirst);
         },
-        onDone: () => Navigator.of(context).popUntil((r) => r.isFirst),
       ),
     );
-  }
-
-  void _restart() {
-    setState(() {
-      _resetBalls();
-      _currentRack = 0;
-      _currentBall = 0;
-      _isSetup = true;
-      _gameStarted = false;
-      _gameOver = false;
-      _secondsLeft = _gameDuration;
-    });
   }
 
   // ── build ─────────────────────────────────────────────────────────────────
@@ -732,13 +720,13 @@ class _BallDot extends StatelessWidget {
 
 class _ResultSheet extends StatelessWidget {
   final int score, maxScore, made;
-  final VoidCallback onRetry, onDone;
+  final VoidCallback onDiscard, onSave;
   const _ResultSheet(
       {required this.score,
       required this.maxScore,
       required this.made,
-      required this.onRetry,
-      required this.onDone});
+      required this.onDiscard,
+      required this.onSave});
 
   String get _grade {
     final pct = score / maxScore;
@@ -817,36 +805,39 @@ class _ResultSheet extends StatelessWidget {
                   child: Text('NBA All-Star record: 27/30 (Craig Hodges, 1991)',
                       style: AppText.ui(11, color: AppColors.text3))),
             ])),
-        const SizedBox(height: 12),
+        const SizedBox(height: 28),
         Row(children: [
           Expanded(
-              child: GestureDetector(
-                  onTap: onRetry,
-                  child: Container(
-                      height: 50,
-                      decoration: BoxDecoration(
-                          border: Border.all(color: AppColors.border),
-                          borderRadius: BorderRadius.circular(12)),
-                      child: Center(
-                          child: Text('Try Again',
-                              style: AppText.ui(14,
-                                  weight: FontWeight.w600,
-                                  color: AppColors.text2)))))),
+            child: GestureDetector(
+              onTap: onDiscard,
+              child: Container(
+                  height: 52,
+                  decoration: BoxDecoration(
+                      color: AppColors.surfaceHi,
+                      borderRadius: BorderRadius.circular(14)),
+                  child: Center(
+                      child: Text('Discard',
+                          style: AppText.ui(14,
+                              weight: FontWeight.w700,
+                              color: AppColors.text2)))),
+            ),
+          ),
           const SizedBox(width: 12),
           Expanded(
-              flex: 2,
-              child: GestureDetector(
-                  onTap: onDone,
-                  child: Container(
-                      height: 50,
-                      decoration: BoxDecoration(
-                          color: AppColors.gold,
-                          borderRadius: BorderRadius.circular(12)),
-                      child: Center(
-                          child: Text('Done',
-                              style: AppText.ui(14,
-                                  weight: FontWeight.w700,
-                                  color: AppColors.bg)))))),
+            child: GestureDetector(
+              onTap: onSave,
+              child: Container(
+                  height: 52,
+                  decoration: BoxDecoration(
+                      color: AppColors.gold,
+                      borderRadius: BorderRadius.circular(14)),
+                  child: Center(
+                      child: Text('Save',
+                          style: AppText.ui(14,
+                              weight: FontWeight.w700,
+                              color: AppColors.bg)))),
+            ),
+          ),
         ]),
       ]),
     );

@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import '../main.dart';
 import '../utils/haptics.dart';
 import 'session_tracking_screen.dart';
@@ -56,7 +55,7 @@ class _SessionSetupScreenState extends State<SessionSetupScreen>
   }
 
   void _select(String id) {
-    HapticFeedback.selectionClick();
+    Haptics.selectionClick();
     setState(() {
       _selectedId = id;
       _selectionStats = null;
@@ -112,7 +111,7 @@ class _SessionSetupScreenState extends State<SessionSetupScreen>
   }
 
   void _modeToggleAction(SessionMode newMode) {
-    HapticFeedback.selectionClick();
+    Haptics.selectionClick();
     setState(() {
       _mode = newMode;
       _selectedId = newMode == SessionMode.position ? 'free_throw' : 'mid';

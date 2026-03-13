@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import '../main.dart';
@@ -29,10 +30,12 @@ class _DashboardScreenState extends State<DashboardScreen>
   final _authService = AuthService();
   final _sessionService = SessionService();
   late Future<Map<String, dynamic>> _statsFuture;
+  StreamSubscription? _sessionSub;
+  StreamSubscription? _authSub;
 
   void _reload() => setState(() {
         _statsFuture = _sessionService.getStatsData();
-        _loadUserGoals();
+        _loadUserSettings();
       });
 
   int _weeklyMakesGoal = 200;
@@ -41,15 +44,18 @@ class _DashboardScreenState extends State<DashboardScreen>
   void initState() {
     super.initState();
     _statsFuture = _sessionService.getStatsData();
-    _loadUserGoals();
+    _loadUserSettings();
+    _sessionSub = _sessionService.updates.listen((_) => _reload());
+    _authSub = _authService.updates.listen((_) => _reload());
   }
 
-  void _loadUserGoals() {
+  void _loadUserSettings() {
     final user = _authService.currentUser;
     if (user != null && user.userMetadata != null) {
       final meta = user.userMetadata!;
       setState(() {
         _weeklyMakesGoal = meta['weekly_makes_goal'] as int? ?? 200;
+        Haptics.enabled = meta['haptics_enabled'] as bool? ?? true;
       });
     }
   }
@@ -57,6 +63,8 @@ class _DashboardScreenState extends State<DashboardScreen>
   @override
   void dispose() {
     _entryCtrl.dispose();
+    _sessionSub?.cancel();
+    _authSub?.cancel();
     super.dispose();
   }
 
@@ -170,25 +178,31 @@ class _DashboardScreenState extends State<DashboardScreen>
                     _logActions(),
                     const SizedBox(height: 28),
 
-                    // 2. Weekly goal
+                    // 2. Quote of the day
+                    _label('QUOTE OF THE DAY'),
+                    const SizedBox(height: 12),
+                    _quoteOfTheDay(),
+                    const SizedBox(height: 28),
+
+                    // 3. Weekly goal
                     _label('WEEKLY GOAL'),
                     const SizedBox(height: 12),
                     _weeklyGoal(weeklyMade),
                     const SizedBox(height: 28),
 
-                    // 3. Accuracy trend
+                    // 4. Accuracy trend
                     _label('ACCURACY TREND'),
                     const SizedBox(height: 12),
                     _trendChart(weekPct, weekLabels, monthPct, monthLabels),
                     const SizedBox(height: 28),
                     
-                    // 3.5 Sessions chart
+                    // 5. Sessions chart
                     _label('SESSIONS'),
                     const SizedBox(height: 12),
                     _sessionsBarChart(weekCounts, weekLabels, monthCounts, monthLabels),
                     const SizedBox(height: 28),
 
-                    // 4. Consistency calendar
+                    // 6. Consistency calendar
                     _label('CONSISTENCY'),
                     const SizedBox(height: 12),
                     _calendarHeatmap(
@@ -199,15 +213,19 @@ class _DashboardScreenState extends State<DashboardScreen>
                     ),
                     const SizedBox(height: 28),
 
-                    // 5. Quote of the day
-                    _quoteOfTheDay(),
-                    const SizedBox(height: 28),
                   ]),
             ),
           )),
         ]);
       },
     );
+  }
+
+  String _getGreeting() {
+    final hour = DateTime.now().hour;
+    if (hour >= 5 && hour < 12) return 'GOOD MORNING';
+    if (hour >= 12 && hour < 18) return 'GOOD AFTERNOON';
+    return 'GOOD EVENING';
   }
 
   // ══════════════════════════════════════════════════════════════════════════
@@ -219,16 +237,22 @@ class _DashboardScreenState extends State<DashboardScreen>
         child: Padding(
           padding: const EdgeInsets.fromLTRB(24, 20, 24, 0),
           child: Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
-            Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text('GOOD EVENING',
-                  style: AppText.ui(11,
-                      color: AppColors.text2,
-                      letterSpacing: 1.4,
-                      weight: FontWeight.w800)),
-              const SizedBox(height: 2),
-              Text(_userName, style: AppText.ui(24, weight: FontWeight.w800)),
-            ]),
-            const Spacer(),
+            Expanded(
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(_getGreeting(),
+                        style: AppText.ui(11,
+                            color: AppColors.text2,
+                            letterSpacing: 1.4,
+                            weight: FontWeight.w800)),
+                    const SizedBox(height: 2),
+                    Text(_userName,
+                        style: AppText.ui(24, weight: FontWeight.w800),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis),
+                  ]),
+            ),
             if (streak > 0)
               Container(
                 padding:
@@ -382,17 +406,17 @@ class _DashboardScreenState extends State<DashboardScreen>
           const SizedBox(height: 14),
           Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
             Text('$made',
-                style: AppText.display(48, color: AppColors.text1)),
+                style: AppText.display(32, color: done ? AppColors.gold : AppColors.text1)),
             Padding(
-              padding: const EdgeInsets.only(bottom: 8, left: 6),
+              padding: const EdgeInsets.only(bottom: 4, left: 6),
               child: Text('/ $target',
-                  style: AppText.ui(18,
+                  style: AppText.ui(16,
                       color: AppColors.text3, weight: FontWeight.w600)),
             ),
             const Spacer(),
             Text('${(pct * 100).round()}%',
                 style: AppText.ui(15,
-                    weight: FontWeight.w700, color: AppColors.gold)),
+                    weight: FontWeight.w700, color: done ? AppColors.gold : AppColors.text2)),
           ]),
           const SizedBox(height: 12),
           Row(
@@ -513,14 +537,15 @@ class _DashboardScreenState extends State<DashboardScreen>
                 padding:
                     const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                 decoration: BoxDecoration(
-                    color: AppColors.greenSoft,
+                    color: Colors.transparent,
+                    border: Border.all(color: AppColors.gold.withValues(alpha: 0.6), width: 1),
                     borderRadius: BorderRadius.circular(8)),
                 child: Row(children: [
                   Text('Consistency: ',
                       style: AppText.ui(11, color: AppColors.text2)),
                   Text('${(score * 100).round()}%',
                       style: AppText.ui(11,
-                          weight: FontWeight.w700, color: AppColors.green)),
+                          weight: FontWeight.w700, color: AppColors.gold)),
                 ]),
               ),
             ]),
@@ -541,18 +566,10 @@ class _DashboardScreenState extends State<DashboardScreen>
                     const SizedBox(width: 8),
                     ...week.map((v) => Expanded(
                             child: Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 2),
+                          padding: const EdgeInsets.symmetric(horizontal: 5),
                           child: AspectRatio(
                               aspectRatio: 1,
-                              child: Container(
-                                decoration: BoxDecoration(
-                                  borderRadius: BorderRadius.circular(4),
-                                  color: v == 0
-                                      ? AppColors.borderSub
-                                      : AppColors.gold
-                                          .withValues(alpha: 0.15 + 0.75 * v),
-                                ),
-                              )),
+                              child: Container(decoration: _getHeatmapDecor(v))),
                         ))),
                   ]),
                 )),
@@ -560,23 +577,73 @@ class _DashboardScreenState extends State<DashboardScreen>
             Row(mainAxisAlignment: MainAxisAlignment.end, children: [
               Text('Less ', style: AppText.ui(12, color: AppColors.text2)),
               ...List.generate(
-                  5,
+                  4,
                   (i) => Container(
                         width: 10,
                         height: 10,
                         margin: const EdgeInsets.only(left: 3),
-                        decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(2),
-                            color: i == 0
-                                ? AppColors.borderSub
-                                : AppColors.gold
-                                    .withValues(alpha: 0.15 + 0.75 * (i / 4))),
+                        decoration: _getHeatmapDecor(i / 3.0, isLegend: true),
                       )),
               Text(' More', style: AppText.ui(12, color: AppColors.text2)),
             ]),
           ]),
         ),
       );
+
+  BoxDecoration _getHeatmapDecor(double v, {bool isLegend = false}) {
+    if (v <= 0) {
+      return BoxDecoration(
+        color: AppColors.borderSub,
+        borderRadius: BorderRadius.circular(isLegend ? 2 : 3),
+      );
+    }
+
+    int level;
+    if (v <= 0.34) {
+      level = 1;
+    } else if (v <= 0.67) {
+      level = 2;
+    } else {
+      level = 3;
+    }
+
+    Color? color;
+    Border? border;
+    List<BoxShadow>? shadows;
+
+    switch (level) {
+      case 1:
+        // 1-7 shots: puste z ramką
+        color = Colors.transparent;
+        border = Border.all(
+            color: AppColors.gold.withValues(alpha: 0.3), width: 0.8);
+        break;
+      case 2:
+        // 8-15 shots: ramka i lekki zolty
+        color = AppColors.gold.withValues(alpha: 0.35);
+        border = Border.all(
+            color: AppColors.gold.withValues(alpha: 0.45), width: 0.8);
+        break;
+      default: // Level 3: 15+ shots: zolty i poswiata
+        color = AppColors.gold;
+        border = Border.all(
+            color: AppColors.gold.withValues(alpha: 0.8), width: 0.8);
+        shadows = [
+          BoxShadow(
+            color: AppColors.gold.withValues(alpha: 0.5),
+            blurRadius: 16,
+            spreadRadius: 2.0,
+          )
+        ];
+    }
+
+    return BoxDecoration(
+      color: color,
+      borderRadius: BorderRadius.circular(isLegend ? 2 : 3),
+      border: border,
+      boxShadow: shadows,
+    );
+  }
 
   // ══════════════════════════════════════════════════════════════════════════
   //  5. QUOTE OF THE DAY  — at the bottom, changes daily
@@ -628,20 +695,20 @@ class _DashboardScreenState extends State<DashboardScreen>
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 24),
       child: Container(
-        padding: const EdgeInsets.fromLTRB(24, 24, 24, 20),
+        padding: const EdgeInsets.fromLTRB(20, 24, 20, 24),
         decoration: BoxDecoration(
           color: AppColors.surface,
           border: Border.all(color: AppColors.border),
-          borderRadius: BorderRadius.circular(22),
+          borderRadius: BorderRadius.circular(20),
         ),
         child: Stack(children: [
           Positioned(
-            top: -8,
+            top: -12,
             right: -4,
             child: Text('"',
                 style: TextStyle(
                   fontFamily: 'Georgia',
-                  fontSize: 96,
+                  fontSize: 100,
                   height: 1,
                   color: AppColors.gold.withValues(alpha: 0.08),
                   fontWeight: FontWeight.w900,
@@ -651,37 +718,33 @@ class _DashboardScreenState extends State<DashboardScreen>
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
-                Row(children: [
-                  Container(
-                    width: 18,
-                    height: 2,
-                    decoration: BoxDecoration(
-                      color: AppColors.gold,
-                      borderRadius: BorderRadius.circular(1),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Text('QUOTE OF THE DAY',
-                      style: AppText.ui(9,
-                          color: AppColors.gold,
-                          letterSpacing: 1.6,
-                          weight: FontWeight.w800)),
-                ]),
-                const SizedBox(height: 18),
                 Text(
                   quote.text,
                   style: const TextStyle(
                     fontFamily: 'Georgia',
-                    fontSize: 17,
-                    height: 1.55,
+                    fontSize: 18,
+                    height: 1.5,
                     color: AppColors.text1,
                     fontStyle: FontStyle.italic,
                   ),
                 ),
-                const SizedBox(height: 14),
-                Text(quote.author,
-                    style: AppText.ui(12,
-                        color: AppColors.text2, weight: FontWeight.w600)),
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    Container(
+                      width: 14,
+                      height: 1.5,
+                      decoration: BoxDecoration(
+                        color: AppColors.gold.withValues(alpha: 0.4),
+                        borderRadius: BorderRadius.circular(1),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(quote.author,
+                        style: AppText.ui(12,
+                            color: AppColors.text3, weight: FontWeight.w600)),
+                  ],
+                ),
               ]),
         ]),
       ),
@@ -926,12 +989,23 @@ class _BarChartPainter extends CustomPainter {
         final val = data[i].toDouble();
         final h = (val / maxV) * cH;
         final x = dx(i);
-        final rect = RRect.fromRectAndCorners(
-            Rect.fromLTWH(x - barW / 2, padT + cH - h, barW, h),
+        final rect = Rect.fromLTWH(x - barW / 2, padT + cH - h, barW, h);
+        final rRect = RRect.fromRectAndCorners(
+            rect,
             topLeft: const Radius.circular(4),
             topRight: const Radius.circular(4),
         );
-        canvas.drawRRect(rect, barPaint);
+
+        barPaint.shader = LinearGradient(
+          begin: Alignment.bottomCenter,
+          end: Alignment.topCenter,
+          colors: [
+            AppColors.gold.withValues(alpha: 0.7),
+            AppColors.gold,
+          ],
+        ).createShader(rect);
+
+        canvas.drawRRect(rRect, barPaint);
 
         final isLast = i == data.length - 1;
         final tp = TextPainter(

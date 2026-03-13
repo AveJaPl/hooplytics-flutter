@@ -1,8 +1,18 @@
+import 'dart:async';
 import '../models/session.dart';
 import '../models/shot.dart';
 import 'base_service.dart';
 
 class SessionService extends BaseService {
+  static final SessionService _instance = SessionService._internal();
+  factory SessionService() => _instance;
+  SessionService._internal();
+
+  final _updatesController = StreamController<void>.broadcast();
+  Stream<void> get updates => _updatesController.stream;
+
+  void notifyListeners() => _updatesController.add(null);
+
   /// Saves a complete session including all shots.
   /// Uses an RPC if available, or sequential inserts.
   /// Since we don't have a specific RPC defined, we'll insert Session,
@@ -36,6 +46,7 @@ class SessionService extends BaseService {
         // 4. Insert shots in a single batch
         await client.from('shots').insert(shotsJson);
       }
+      notifyListeners();
     } catch (e) {
       throw Exception('Failed to save session: $e');
     }
@@ -90,6 +101,7 @@ class SessionService extends BaseService {
           .delete()
           .eq('id', sessionId)
           .eq('user_id', userId);
+      notifyListeners();
     } catch (e) {
       throw Exception('Failed to delete session: $e');
     }
@@ -128,6 +140,7 @@ class SessionService extends BaseService {
 
         await client.from('shots').insert(shotsJson);
       }
+      notifyListeners();
     } catch (e) {
       throw Exception('Failed to update session: $e');
     }
@@ -286,7 +299,8 @@ class SessionService extends BaseService {
       monthLabels.add(monthNames[month.month - 1]);
     }
 
-    // ── Calendar heatmap: last 5 weeks × 7 days ──
+    // ── Calendar heatmap: last 5 weeks × 7 days (including ALL activities) ──
+    final allSessions = sessions; // Use all, including games
     final calendarData = <List<double>>[];
     final startOfWeek =
         now.subtract(Duration(days: now.weekday - 1)); // Monday of this week
@@ -295,19 +309,29 @@ class SessionService extends BaseService {
       final row = <double>[];
       for (int d = 0; d < 7; d++) {
         final day = weekStart.add(Duration(days: d));
-        final daySessions = shootingSessions.where((s) {
+        // Deduplicate sessions by ID for the given day
+        final daySessions = allSessions.where((s) {
           final dt = s.createdAt;
           return dt != null &&
               dt.year == day.year &&
               dt.month == day.month &&
               dt.day == day.day;
         });
-        int dMade = 0, dAtt = 0;
-        for (final s in daySessions) {
-          dMade += s.made;
-          dAtt += s.attempts;
+        final uniqueIds = daySessions.map((s) => s.id).whereType<String>().toSet();
+        final daySessionsCount = uniqueIds.length;
+
+        // Map session count to 4 discrete intensity levels (v)
+        // 0 -> 0.0, 1-3 -> 0.33, 4-10 -> 0.66, 11+ -> 1.0
+        double intensity = 0.0;
+        if (daySessionsCount > 0 && daySessionsCount <= 3) {
+          intensity = 0.33;
+        } else if (daySessionsCount > 3 && daySessionsCount <= 10) {
+          intensity = 0.66;
+        } else if (daySessionsCount > 10) {
+          intensity = 1.0;
         }
-        row.add(dAtt > 0 ? dMade / dAtt : 0.0);
+
+        row.add(intensity);
       }
       calendarData.add(row);
     }

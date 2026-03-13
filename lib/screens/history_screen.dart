@@ -1,12 +1,13 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import '../main.dart';
 import '../utils/haptics.dart';
 import 'session_detail_screen.dart';
 import 'manual_session_detail_screen.dart';
 import 'game_session_detail_screen.dart';
+import '../models/shot.dart';
 import 'session_setup_screen.dart';
 import '../models/session.dart';
-import '../models/shot.dart';
 import '../services/session_service.dart';
 import '../utils/performance.dart';
 // ═════════════════════════════════════════════════════════════════════════════
@@ -32,7 +33,7 @@ class HistoryEntry {
   final IconData icon;
   final int? made;
   final int? attempts;
-  final List<bool>? shotLog;
+  final List<ShotResult>? shotLog;
   final HoopSession? hoopSession;
   final GameSessionData? gameData;
   final Session originalSession;
@@ -155,10 +156,25 @@ class HistoryEntry {
 
     HoopSession? hoopSession;
     if (type != SessionType.game) {
-      // Sort shots by order_idx so the timeline is chronological
       List<Shot>? sortedShots = s.shots?.toList();
       if (sortedShots != null && sortedShots.isNotEmpty) {
         sortedShots.sort((a, b) => a.orderIdx.compareTo(b.orderIdx));
+      }
+
+      int swishCount = 0;
+      int currentSwishStreak = 0;
+      int maxSwishStreak = 0;
+
+      if (sortedShots != null) {
+        for (var s in sortedShots) {
+          if (s.isSwish) {
+            swishCount++;
+            currentSwishStreak++;
+            if (currentSwishStreak > maxSwishStreak) maxSwishStreak = currentSwishStreak;
+          } else {
+            currentSwishStreak = 0;
+          }
+        }
       }
 
       hoopSession = HoopSession(
@@ -172,8 +188,14 @@ class HistoryEntry {
         color: color,
         isLive: type == SessionType.live,
         elapsed: Duration(seconds: s.elapsedSeconds),
-        shotHistory: sortedShots?.map((e) => e.isMake).toList(),
+        shotHistory: sortedShots?.map((e) {
+          if (e.isSwish) return ShotResult.swish;
+          if (e.isMake) return ShotResult.make;
+          return ShotResult.miss;
+        }).toList(),
         maxStreak: s.bestStreak,
+        swishCount: swishCount,
+        swishStreak: maxSwishStreak,
         swishPct: s.attempts > 0 ? (s.swishes * 100 ~/ s.attempts) : 0,
         globalAvgPct: 45,
       );
@@ -196,7 +218,11 @@ class HistoryEntry {
       icon: icon,
       made: s.made,
       attempts: s.attempts,
-      shotLog: s.shots?.map((e) => e.isMake).toList(),
+      shotLog: s.shots?.map((e) {
+        if (e.isSwish) return ShotResult.swish;
+        if (e.isMake) return ShotResult.make;
+        return ShotResult.miss;
+      }).toList(),
       hoopSession: hoopSession,
       gameData: gameData,
       originalSession: s,
@@ -227,10 +253,10 @@ class _HistoryScreenState extends State<HistoryScreen>
   DateTime? _filterStartDate;
   DateTime? _filterEndDate;
   String _sortOption = 'Newest'; // Newest, Oldest
-  String _searchQuery = '';
 
   List<HistoryEntry>? _history;
   String? _error;
+  StreamSubscription? _updateSub;
 
   void _setFilter(
       {String? type,
@@ -293,6 +319,7 @@ class _HistoryScreenState extends State<HistoryScreen>
   void initState() {
     super.initState();
     _loadHistory();
+    _updateSub = SessionService().updates.listen((_) => _loadHistory());
   }
 
   Future<void> _loadHistory() async {
@@ -312,17 +339,7 @@ class _HistoryScreenState extends State<HistoryScreen>
     if (_history == null) return [];
     var list = _history!;
 
-    // 1. Search Query
-    if (_searchQuery.isNotEmpty) {
-      final q = _searchQuery.toLowerCase();
-      list = list.where((e) {
-        return e.title.toLowerCase().contains(q) ||
-            e.subtitle.toLowerCase().contains(q) ||
-            (e.hoopSession?.mode.toString().toLowerCase() ?? '').contains(q);
-      }).toList();
-    }
-
-    // 2. Type Filter
+    // 1. Type Filter
     if (_typeFilter != 'All') {
       if (_typeFilter == 'Sessions') {
         list = list.where((e) => e.type != SessionType.game).toList();
@@ -397,6 +414,7 @@ class _HistoryScreenState extends State<HistoryScreen>
   @override
   void dispose() {
     _entry.dispose();
+    _updateSub?.cancel();
     super.dispose();
   }
 
@@ -426,47 +444,21 @@ class _HistoryScreenState extends State<HistoryScreen>
           height: 44,
           child: Row(
             children: [
-              // Search (50%)
+              // Filter (50%)
               Expanded(
-                flex: 2,
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: AppColors.surface,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: AppColors.border),
-                  ),
-                  child: TextField(
-                    onChanged: (v) => setState(() => _searchQuery = v),
-                    style: AppText.ui(13, color: AppColors.text1),
-                    cursorColor: AppColors.gold,
-                    decoration: InputDecoration(
-                      hintText: 'Search...',
-                      hintStyle: AppText.ui(13, color: AppColors.text3),
-                      prefixIcon: const Icon(Icons.search_rounded,
-                          size: 18, color: AppColors.text3),
-                      border: InputBorder.none,
-                      contentPadding: const EdgeInsets.symmetric(vertical: 11),
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              // Filter (25%)
-              Expanded(
-                flex: 1,
                 child: _controlButton(
                   label: 'Filter',
                   icon: Icons.tune_rounded,
                   active: _typeFilter != 'All' ||
                       _modeFilter != 'All' ||
-                      _detailFilter != 'All',
+                      _detailFilter != 'All' ||
+                      _dateFilter != 'All Time',
                   onTap: _openFilterDrawer,
                 ),
               ),
               const SizedBox(width: 8),
-              // Sort (25%)
+              // Sort (50%)
               Expanded(
-                flex: 1,
                 child: _controlButton(
                   label: _sortOption,
                   icon: Icons.sort_rounded,
@@ -562,8 +554,8 @@ class _HistoryScreenState extends State<HistoryScreen>
                   'Specific Date'
                 ], _dateFilter, (v) {
                   if (v == 'Specific Date') {
-                    _pickDate();
                     Navigator.pop(context);
+                    _pickDate();
                   } else {
                     final now = DateTime.now();
                     final today = DateTime(now.year, now.month, now.day);
@@ -690,6 +682,7 @@ class _HistoryScreenState extends State<HistoryScreen>
                             } else {
                               details.addAll(_history
                                       ?.where((e) =>
+                                          e.type == SessionType.live &&
                                           e.originalSession.mode == 'position')
                                       .map((e) => e.selectionLabel)
                                       .toSet()
@@ -787,31 +780,52 @@ class _HistoryScreenState extends State<HistoryScreen>
   Widget _drawerGrid(
       List<String> options, String current, Function(String) onSelect,
       {Key? key}) {
-    return Wrap(
-      key: key,
-      spacing: 8,
-      runSpacing: 8,
-      alignment: WrapAlignment.start,
-      children: options.map((opt) {
-        final sel = opt == current;
-        return GestureDetector(
-          onTap: () => onSelect(opt),
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-            decoration: BoxDecoration(
-              color: sel ? AppColors.gold.withValues(alpha: 0.1) : AppColors.bg,
-              border:
-                  Border.all(color: sel ? AppColors.gold : AppColors.border),
-              borderRadius: BorderRadius.circular(10),
+    return LayoutBuilder(builder: (context, constraints) {
+      // 3 columns, 8px spacing -> 2 gaps
+      final itemWidth = (constraints.maxWidth - 16) / 3;
+
+      return Wrap(
+        key: key,
+        spacing: 8,
+        runSpacing: 8,
+        children: options.map((opt) {
+          bool sel = opt == current;
+          if (opt == 'Specific Date' &&
+              current != 'All Time' &&
+              current != 'Today' &&
+              current != 'Past Week' &&
+              current != 'Past Month' &&
+              current != 'Past Year') {
+            sel = true;
+          }
+
+          return GestureDetector(
+            onTap: () => onSelect(opt),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 200),
+              width: itemWidth,
+              height: 40,
+              alignment: Alignment.center,
+              padding: const EdgeInsets.symmetric(horizontal: 4),
+              decoration: BoxDecoration(
+                color:
+                    sel ? AppColors.gold.withValues(alpha: 0.1) : AppColors.bg,
+                border:
+                    Border.all(color: sel ? AppColors.gold : AppColors.border),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Text(opt,
+                  textAlign: TextAlign.center,
+                  style: AppText.ui(11,
+                      weight: sel ? FontWeight.w700 : FontWeight.w500,
+                      color: sel ? AppColors.gold : AppColors.text2),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis),
             ),
-            child: Text(opt,
-                style: AppText.ui(12,
-                    weight: sel ? FontWeight.w700 : FontWeight.w500,
-                    color: sel ? AppColors.gold : AppColors.text2)),
-          ),
-        );
-      }).toList(),
-    );
+          );
+        }).toList(),
+      );
+    });
   }
 
   // ── header ────────────────────────────────────────────────────────────────
@@ -1072,7 +1086,7 @@ class _SessionCardState extends State<_SessionCard>
   Widget build(BuildContext context) {
     final e = widget.entry;
     final pctColor =
-        e.pct != null ? PerformanceGuide.colorFor(e.pct!) : e.color;
+        e.pct != null ? PerformanceGuide.colorFor(e.pct!) : AppColors.text3;
 
     return GestureDetector(
       onTapDown: (_) => _press.forward(),

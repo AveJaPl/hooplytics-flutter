@@ -45,7 +45,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
     if (user != null && user.userMetadata != null) {
       final meta = user.userMetadata!;
       setState(() {
-        _weeklyMakesGoal = meta['weekly_makes_goal'] as int? ?? 200;
+        _weeklyMakesGoal =
+            (meta['weekly_makes_goal'] as int? ?? 200).clamp(100, 5000);
         _weeklySessionGoal = meta['weekly_sessions_goal'] as int? ?? 5;
         _streakReminder = meta['streak_reminder'] as bool? ?? true;
       });
@@ -60,6 +61,20 @@ class _ProfileScreenState extends State<ProfileScreen> {
       return meta['display_name'] as String;
     }
     return user.email?.split('@').first ?? 'Player';
+  }
+
+  double _goalToIndex(int goal) {
+    if (goal <= 500) return (goal - 100) / 10.0;
+    if (goal <= 1000) return 40.0 + (goal - 500) / 20.0;
+    if (goal <= 2000) return 65.0 + (goal - 1000) / 50.0;
+    return 85.0 + (goal - 2000) / 200.0;
+  }
+
+  int _indexToGoal(double index) {
+    if (index <= 40) return (100 + index * 10).round();
+    if (index <= 65) return (500 + (index - 40) * 20).round();
+    if (index <= 85) return (1000 + (index - 65) * 50).round();
+    return (2000 + (index - 85) * 200).round();
   }
 
   // ── Bottom sheets (unchanged logic) ───────────────────────────────────────
@@ -109,7 +124,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               const SizedBox(height: 32),
               GestureDetector(
                 onTap: () async {
-                  HapticFeedback.mediumImpact();
+                  Haptics.mediumImpact();
                   final nav = Navigator.of(context);
                   try {
                     await _authService
@@ -450,7 +465,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 const SizedBox(height: 28),
                 GestureDetector(
                   onTap: () {
-                    HapticFeedback.mediumImpact();
+                    Haptics.mediumImpact();
                     if (ctrl.text.trim().isNotEmpty) {
                       Navigator.pop(context);
                       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
@@ -523,14 +538,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 // ── Pro upsell (only if not pro) ─────────────────────────
                 if (!_isPro) ...[_proCard(), const SizedBox(height: 32)],
 
-                // ── Account section ──────────────────────────────────────
-                _sectionLabel('ACCOUNT'),
-                _tile(
-                  icon: Icons.person_outline_rounded,
-                  label: 'Edit Profile',
-                  onTap: _showEditProfile,
-                ),
-                const SizedBox(height: 24),
 
                 // ── Preferences section ──────────────────────────────────
                 _sectionLabel('PREFERENCES'),
@@ -539,9 +546,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   label: 'Haptic Feedback',
                   isToggle: true,
                   toggleValue: Haptics.enabled,
-                  onTap: () {
-                    setState(() => Haptics.enabled = !Haptics.enabled);
-                    Haptics.lightImpact();
+                  onTap: () async {
+                    final newVal = !Haptics.enabled;
+                    setState(() => Haptics.enabled = newVal);
+                    if (newVal) Haptics.lightImpact();
+                    await _authService
+                        .updateUserMetadata({'haptics_enabled': newVal});
                   },
                 ),
                 const SizedBox(height: 24),
@@ -567,7 +577,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 _tile(
                   icon: Icons.notifications_none_rounded,
                   label: 'Notifications',
-                  badge: _notificationsEnabled,
                   onTap: _showNotificationSettings,
                 ),
                 _tile(
@@ -614,13 +623,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
         padding: const EdgeInsets.fromLTRB(24, 20, 24, 0),
         child: Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
           Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text('ACCOUNT',
+            Text('PROFILE',
                 style: AppText.ui(11,
                     color: AppColors.text2,
                     letterSpacing: 1.4,
                     weight: FontWeight.w800)),
             const SizedBox(height: 2),
-            Text('Profile', style: AppText.ui(24, weight: FontWeight.w800)),
+            Text('Your Account', style: AppText.ui(24, weight: FontWeight.w800)),
           ]),
           const Spacer(),
         ]),
@@ -641,81 +650,123 @@ class _ProfileScreenState extends State<ProfileScreen> {
             .join();
 
     return Container(
-      padding: const EdgeInsets.all(20),
+      padding: const EdgeInsets.all(22),
       decoration: BoxDecoration(
         color: AppColors.surface,
-        border: Border.all(color: AppColors.border),
-        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+            color: _isPro
+                ? AppColors.gold.withValues(alpha: 0.3)
+                : AppColors.border),
+        borderRadius: BorderRadius.circular(24),
+        boxShadow: [
+          if (_isPro)
+            BoxShadow(
+              color: AppColors.gold.withValues(alpha: 0.08),
+              blurRadius: 20,
+              offset: const Offset(0, 8),
+            ),
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.2),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
       ),
       child: Row(children: [
-        // Avatar
+        // Avatar + Edit
         GestureDetector(
           onTap: _showAvatarPicker,
-          child: Stack(children: [
+          child: Stack(clipBehavior: Clip.none, children: [
             Container(
-              width: 68,
-              height: 68,
+              width: 76,
+              height: 76,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: AppColors.gold.withValues(alpha: 0.12),
+                gradient: const LinearGradient(
+                  colors: [
+                    AppColors.surfaceHi,
+                    AppColors.bg,
+                  ],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
                 border: Border.all(
-                    color: AppColors.gold.withValues(alpha: 0.40), width: 2),
+                    color: _isPro
+                        ? AppColors.gold.withValues(alpha: 0.5)
+                        : AppColors.border,
+                    width: 2),
                 image: _selectedAvatar != null
                     ? DecorationImage(
                         image: AssetImage(_selectedAvatar!), fit: BoxFit.cover)
                     : null,
+                boxShadow: [
+                  if (_isPro)
+                    BoxShadow(
+                      color: AppColors.gold.withValues(alpha: 0.2),
+                      blurRadius: 12,
+                      spreadRadius: 2,
+                    ),
+                ],
               ),
               child: _selectedAvatar == null
                   ? Center(
                       child: Text(initials,
-                          style: const TextStyle(
-                              color: AppColors.gold,
-                              fontSize: 24,
-                              fontWeight: FontWeight.w800)))
+                          style: AppText.display(28,
+                              color: _isPro ? AppColors.gold : AppColors.text2)))
                   : null,
             ),
             // Edit badge
             Positioned(
-                right: 0,
-                bottom: 0,
-                child: Container(
-                  width: 22,
-                  height: 22,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: AppColors.surfaceHi,
-                    border: Border.all(color: AppColors.border, width: 1.5),
+                right: -2,
+                bottom: -2,
+                child: GestureDetector(
+                  onTap: _showAvatarPicker,
+                  child: Container(
+                    width: 26,
+                    height: 26,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: AppColors.gold,
+                      border: Border.all(color: AppColors.bg, width: 2),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.3),
+                          blurRadius: 4,
+                        )
+                      ],
+                    ),
+                    child: const Icon(Icons.camera_alt_rounded,
+                        size: 13, color: AppColors.bg),
                   ),
-                  child: const Icon(Icons.edit_rounded,
-                      size: 12, color: AppColors.text2),
                 )),
           ]),
         ),
-        const SizedBox(width: 16),
+        const SizedBox(width: 20),
+        // Info
         Expanded(
             child:
                 Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text(_userName,
-              style:
-                  AppText.ui(20, weight: FontWeight.w700, color: Colors.white),
+              style: AppText.ui(22,
+                  weight: FontWeight.w800, color: Colors.white),
               maxLines: 1,
               overflow: TextOverflow.ellipsis),
-          const SizedBox(height: 6),
+          const SizedBox(height: 4),
           _isPro ? _proBadge() : _localBadge(),
         ])),
-        // Edit profile arrow
+        // Fixed Edit button
+        const SizedBox(width: 12),
         GestureDetector(
           onTap: _showEditProfile,
           child: Container(
-            width: 36,
-            height: 36,
+            padding: const EdgeInsets.all(8),
             decoration: BoxDecoration(
               color: AppColors.surfaceHi,
-              border: Border.all(color: AppColors.border),
               borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: AppColors.border),
             ),
-            child: const Icon(Icons.edit_outlined,
-                size: 16, color: AppColors.text2),
+            child: const Icon(Icons.edit_note_rounded,
+                size: 20, color: AppColors.gold),
           ),
         ),
       ]),
@@ -914,9 +965,21 @@ class _ProfileScreenState extends State<ProfileScreen> {
           ),
           const SizedBox(width: 14),
           Expanded(
-              child: Text(label,
-                  style: AppText.ui(15,
-                      weight: FontWeight.w500, color: Colors.white))),
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                Text(label,
+                    style: AppText.ui(15,
+                        weight: FontWeight.w500, color: Colors.white)),
+                if (!isToggle && value != null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: Text(value,
+                        style: AppText.ui(13,
+                            color: AppColors.gold, weight: FontWeight.w600)),
+                  ),
+              ])),
           if (isToggle)
             SizedBox(
                 height: 24,
@@ -928,14 +991,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   inactiveThumbColor: AppColors.text3,
                   inactiveTrackColor: AppColors.bg,
                 ))
-          else if (value != null) ...[
-            Text(value,
-                style: AppText.ui(13,
-                    color: AppColors.gold, weight: FontWeight.w600)),
-            const SizedBox(width: 6),
+          else if (value != null)
             const Icon(Icons.chevron_right_rounded,
                 color: AppColors.text3, size: 18),
-          ],
         ]),
       ),
     );
@@ -1020,14 +1078,17 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   _GoalSliderRow(
                     label: 'Weekly Makes Goal',
                     icon: Icons.sports_basketball_outlined,
-                    value: _weeklyMakesGoal.toDouble(),
-                    min: 50,
-                    max: 500,
-                    divisions: 18,
+                    value: _goalToIndex(_weeklyMakesGoal).toDouble(),
+                    min: 0,
+                    max: 100,
+                    divisions: 100,
+                    minLabel: '100',
+                    maxLabel: '5000',
                     displayValue: '$_weeklyMakesGoal makes',
                     onChanged: (v) {
-                      setModal(() => _weeklyMakesGoal = v.round());
-                      setState(() => _weeklyMakesGoal = v.round());
+                      final goal = _indexToGoal(v);
+                      setModal(() => _weeklyMakesGoal = goal);
+                      setState(() => _weeklyMakesGoal = goal);
                     },
                   ),
                   const SizedBox(height: 24),
@@ -1090,7 +1151,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }) {
     return GestureDetector(
       onTap: () {
-        HapticFeedback.mediumImpact();
+        Haptics.mediumImpact();
         onTap();
       },
       child: Container(
@@ -1135,6 +1196,7 @@ class _GoalSliderRow extends StatelessWidget {
   final double value, min, max;
   final int divisions;
   final String displayValue;
+  final String? minLabel, maxLabel;
   final ValueChanged<double> onChanged;
 
   const _GoalSliderRow({
@@ -1145,6 +1207,8 @@ class _GoalSliderRow extends StatelessWidget {
     required this.max,
     required this.divisions,
     required this.displayValue,
+    this.minLabel,
+    this.maxLabel,
     required this.onChanged,
   });
 
@@ -1195,9 +1259,11 @@ class _GoalSliderRow extends StatelessWidget {
       Padding(
         padding: const EdgeInsets.symmetric(horizontal: 4),
         child: Row(children: [
-          Text('${min.round()}', style: AppText.ui(11, color: AppColors.text3)),
+          Text(minLabel ?? '${min.round()}',
+              style: AppText.ui(11, color: AppColors.text3)),
           const Spacer(),
-          Text('${max.round()}', style: AppText.ui(11, color: AppColors.text3)),
+          Text(maxLabel ?? '${max.round()}',
+              style: AppText.ui(11, color: AppColors.text3)),
         ]),
       ),
     ]);

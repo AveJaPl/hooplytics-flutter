@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:ui';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -11,6 +12,14 @@ class AuthService extends BaseService {
   static final AuthService _instance = AuthService._internal();
   factory AuthService() => _instance;
   AuthService._internal();
+
+  // ─── Reactive Metadata updates ──────────────────
+  final _updatesController = StreamController<void>.broadcast();
+  Stream<void> get updates => _updatesController.stream;
+
+  void notifyListeners() {
+    _updatesController.add(null);
+  }
 
   // ─── Current user ───────────────────────────────
   User? get currentUser => client.auth.currentUser;
@@ -86,9 +95,11 @@ class AuthService extends BaseService {
 
   /// Updates current user's metadata (e.g. display_name).
   Future<UserResponse> updateUserMetadata(Map<String, dynamic> data) async {
-    return await client.auth.updateUser(
+    final res = await client.auth.updateUser(
       UserAttributes(data: data),
     );
+    notifyListeners();
+    return res;
   }
 }
 

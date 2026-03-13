@@ -4,6 +4,7 @@ import '../main.dart';
 import '../utils/haptics.dart';
 import '../widgets/basketball_court_map.dart';
 import 'session_setup_screen.dart';
+import '../models/shot.dart';
 import '../models/session.dart';
 import '../services/session_service.dart';
 
@@ -22,8 +23,10 @@ class HoopSession {
   final Color color; // session TYPE color — stays constant everywhere
   final bool isLive;
   final Duration? elapsed;
-  final List<bool>? shotHistory;
+  final List<ShotResult>? shotHistory;
   final int? maxStreak;
+  final int? swishCount;
+  final int? swishStreak;
   final int? swishPct;
   final int globalAvgPct;
 
@@ -40,6 +43,8 @@ class HoopSession {
     this.elapsed,
     this.shotHistory,
     this.maxStreak,
+    this.swishCount,
+    this.swishStreak,
     this.swishPct,
     required this.globalAvgPct,
   });
@@ -103,15 +108,6 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
       await SessionService().deleteSession(widget.originalSession.id!);
       if (mounted) {
         Navigator.pop(context);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Session deleted', style: AppText.ui(13)),
-            backgroundColor: AppColors.surface,
-            behavior: SnackBarBehavior.floating,
-            shape:
-                RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-          ),
-        );
       }
     } catch (e) {
       if (mounted) {
@@ -187,9 +183,9 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
                 if (widget.session.isLive &&
                     (widget.session.shotHistory?.isNotEmpty ?? false)) ...[
                   const SizedBox(height: 24),
-                  _progressionChart(),
+                  _shotLogSection(),
                   const SizedBox(height: 24),
-                  _timelineSection(),
+                  _progressionChart(),
                 ],
                 const SizedBox(height: 24),
                 _performanceSection(),
@@ -417,13 +413,20 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
   //  Uses widget.session.color for MADE, neutral for rest — no red
   // ══════════════════════════════════════════════════════════════════════════
 
-  Widget _statsRow() => Row(children: [
-        _statCard('MADE', '${widget.session.made}', widget.session.color),
-        const SizedBox(width: 12),
-        _statCard('MISSED', '${widget.session.attempts - widget.session.made}',
-            AppColors.text2),
-        const SizedBox(width: 12),
-        _statCard('TOTAL', '${widget.session.attempts}', AppColors.text1),
+  Widget _statsRow() => Column(children: [
+        Row(children: [
+          _statCard('MADE', '${widget.session.made}', widget.session.color),
+          const SizedBox(width: 12),
+          _statCard('SWISH', '${widget.session.swishCount ?? widget.session.swishPct}',
+              widget.session.color),
+        ]),
+        const SizedBox(height: 12),
+        Row(children: [
+          _statCard('MISSED', '${widget.session.attempts - widget.session.made}',
+              AppColors.text2),
+          const SizedBox(width: 12),
+          _statCard('TOTAL', '${widget.session.attempts}', AppColors.text1),
+        ]),
       ]);
 
   Widget _statCard(String label, String value, Color valueColor) => Expanded(
@@ -453,7 +456,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
     final points = <double>[];
     int runningMade = 0;
     for (int i = 0; i < history.length; i++) {
-      if (history[i]) runningMade++;
+      if (history[i] != ShotResult.miss) runningMade++;
       points.add(runningMade / (i + 1));
     }
     final avg = history.isEmpty ? 0.0 : runningMade / history.length;
@@ -479,12 +482,13 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
   //  TIMELINE  (shot history bar chart)
   // ══════════════════════════════════════════════════════════════════════════
 
-  Widget _timelineSection() {
+  Widget _shotLogSection() {
     final history = widget.session.shotHistory ?? [];
+    final modeColor = widget.session.color;
 
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-        Text('SESSION TIMELINE',
+        Text('SHOT LOG',
             style: AppText.ui(10,
                 color: AppColors.text3,
                 letterSpacing: 1.5,
@@ -493,49 +497,75 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
             decoration: BoxDecoration(
-                color: widget.session.color.withValues(alpha: 0.10),
+                color: modeColor.withValues(alpha: 0.10),
                 borderRadius: BorderRadius.circular(6),
                 border: Border.all(
-                    color: widget.session.color.withValues(alpha: 0.25))),
+                    color: modeColor.withValues(alpha: 0.25))),
             child: Text('🔥 STREAK ${widget.session.maxStreak}',
                 style: AppText.ui(10,
-                    weight: FontWeight.w800, color: widget.session.color)),
+                    weight: FontWeight.w800, color: modeColor)),
           ),
       ]),
       const SizedBox(height: 12),
       Container(
-        height: 56,
-        padding: const EdgeInsets.symmetric(horizontal: 14),
+        padding: const EdgeInsets.all(18),
         decoration: BoxDecoration(
             color: AppColors.surface,
-            borderRadius: BorderRadius.circular(14),
+            borderRadius: BorderRadius.circular(16),
             border: Border.all(color: AppColors.border)),
-        child: history.isEmpty
-            ? Center(
+        child: Column(children: [
+          if (history.isEmpty)
+            Center(
                 child: Text('No shot data',
                     style: AppText.ui(12, color: AppColors.text3)))
-            : ListView.separated(
-                scrollDirection: Axis.horizontal,
-                physics: const BouncingScrollPhysics(),
-                itemCount: history.length,
-                separatorBuilder: (_, __) => const SizedBox(width: 5),
-                itemBuilder: (_, i) {
-                  final make = history[i];
-                  return Center(
-                      child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 200),
-                    width: 12,
-                    // made = session color bar, missed = dim stub
-                    height: make ? 30 : 12,
-                    decoration: BoxDecoration(
-                        color: make
-                            ? widget.session.color.withValues(alpha: 0.85)
-                            : AppColors.surfaceHi,
-                        borderRadius: BorderRadius.circular(6)),
-                  ));
-                },
-              ),
+          else ...[
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: history.map((r) {
+                return Container(
+                  width: 12,
+                  height: 12,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: r == ShotResult.swish ? modeColor : Colors.transparent,
+                    border: Border.all(
+                      color: r == ShotResult.miss
+                          ? AppColors.border
+                          : modeColor,
+                      width: 1.5,
+                    ),
+                  ),
+                );
+              }).toList(),
+            ),
+            const SizedBox(height: 16),
+            Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+              _legendDot(modeColor, 'made', isOutline: true),
+              const SizedBox(width: 16),
+              _legendDot(modeColor, 'swish', isOutline: false),
+              const SizedBox(width: 16),
+              _legendDot(AppColors.border, 'missed', isOutline: true),
+            ]),
+          ],
+        ]),
       ),
+    ]);
+  }
+
+  Widget _legendDot(Color color, String label, {required bool isOutline}) {
+    return Row(mainAxisSize: MainAxisSize.min, children: [
+      Container(
+        width: 10,
+        height: 10,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: isOutline ? Colors.transparent : color,
+          border: Border.all(color: color, width: 1.5),
+        ),
+      ),
+      const SizedBox(width: 6),
+      Text(label, style: AppText.ui(11, color: AppColors.text2)),
     ]);
   }
 
@@ -623,13 +653,13 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
       final last =
           history.sublist(history.length - math.min(10, history.length));
       closerVal =
-          '${(last.where((s) => s).length / last.length * 100).round()}%';
+          '${(last.where((s) => s != ShotResult.miss).length / last.length * 100).round()}%';
     }
 
     // Stability
     int maxMiss = 0, cur = 0;
     for (var m in history) {
-      if (!m) {
+      if (m == ShotResult.miss) {
         cur++;
         if (cur > maxMiss) maxMiss = cur;
       } else {
@@ -642,19 +672,6 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
             ? 'SOLID'
             : 'VOLATILE';
 
-    // Pattern
-    String pattern = 'BALANCED';
-    if (history.length >= 10) {
-      final mid = history.length ~/ 2;
-      final f = history.sublist(0, mid).where((s) => s).length / mid;
-      final s =
-          history.sublist(mid).where((s) => s).length / (history.length - mid);
-      if (s > f + 0.15) {
-        pattern = 'STRONG FINISH';
-      } else if (f > s + 0.15) {
-        pattern = 'HOT START';
-      }
-    }
 
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       _label('SESSION INSIGHTS'),
@@ -666,15 +683,14 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
         crossAxisSpacing: 10,
         childAspectRatio: 1.5,
         children: [
-          // Icon uses widget.session.color for brand consistency, value is white
+          _insightCard('MAX STREAK', '${widget.session.maxStreak ?? 0}',
+              Icons.local_fire_department_rounded, widget.session.color),
+          _insightCard('SWISH STREAK', '${widget.session.swishStreak ?? 0}',
+              Icons.stars_rounded, widget.session.color),
           _insightCard('THE CLOSER', closerVal, Icons.bolt_rounded,
               widget.session.color),
           _insightCard(
               'STABILITY', stability, Icons.vibration_rounded, AppColors.text2),
-          _insightCard('MAX STREAK', '${widget.session.maxStreak ?? 0}',
-              Icons.local_fire_department_rounded, widget.session.color),
-          _insightCard(
-              'PATTERN', pattern, Icons.waves_rounded, AppColors.text2),
         ],
       ),
     ]);

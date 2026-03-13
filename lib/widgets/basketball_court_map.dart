@@ -1,21 +1,14 @@
+import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import '../main.dart';
 import '../utils/performance.dart';
+
 // ─────────────────────────────────────────────────────────────────────────────
 //  Models
 // ─────────────────────────────────────────────────────────────────────────────
 
-enum CourtMapMode {
-  /// Interactive setup: grey spots, selected is gold, no stats inside.
-  setup,
-
-  /// Statistical overview: heatmap-colored spots based on %, shows % inside.
-  stats,
-
-  /// Range breakdown: filled zones (layup, close, mid, three).
-  range,
-}
+enum CourtMapMode { setup, stats, range }
 
 class MapSpotData {
   final String id;
@@ -36,7 +29,7 @@ class MapSpotData {
 class RangeZone {
   final String id;
   final String label;
-  final int tier; // 0=layup, 1=close, 2=mid, 3=three
+  final int tier;
   const RangeZone(this.id, this.label, this.tier);
 }
 
@@ -48,14 +41,14 @@ class CourtGeo {
   final double w, h;
   CourtGeo(this.w, this.h);
 
-  double get baseY => h - 22.0; // Slightly more padding from bottom
+  double get baseY => h - 22.0;
   double get bx => w / 2;
   double get by => baseY - w * 0.105;
-  double get keyL => bx - w * 0.160; // 16ft width (NBA)
+  double get keyL => bx - w * 0.160;
   double get keyR => bx + w * 0.160;
-  double get ftY => baseY - w * 0.380; // 19ft (NBA)
+  double get ftY => baseY - w * 0.380;
   double get ftR => w * 0.120;
-  double get tpArcR => w * 0.475; // 23.75ft (NBA)
+  double get tpArcR => w * 0.475;
   double get tpL => bx - w * 0.440;
   double get tpR => bx + w * 0.440;
 
@@ -65,24 +58,6 @@ class CourtGeo {
   double get tpSweepAngle =>
       math.atan2(tpIntersectY - by, tpR - bx) - tpStartAngle;
   double get raR => w * 0.083;
-
-  List<MapSpotData> get defaultSpots {
-    return [
-      const MapSpotData(id: 'left_corner', label: 'Left Corner'),
-      const MapSpotData(id: 'right_corner', label: 'Right Corner'),
-      const MapSpotData(id: 'left_wing', label: 'Left Wing'),
-      const MapSpotData(id: 'right_wing', label: 'Right Wing'),
-      const MapSpotData(id: 'top_arc', label: 'Top of Arc'),
-      const MapSpotData(id: 'left_elbow', label: 'Left Elbow'),
-      const MapSpotData(id: 'right_elbow', label: 'Right Elbow'),
-      const MapSpotData(id: 'left_block', label: 'Left Block'),
-      const MapSpotData(id: 'right_block', label: 'Right Block'),
-      const MapSpotData(id: 'free_throw', label: 'Free Throw'),
-      const MapSpotData(id: 'high_arc', label: 'High Arc'),
-      const MapSpotData(id: 'left_mid', label: 'Left Mid'),
-      const MapSpotData(id: 'right_mid', label: 'Right Mid'),
-    ];
-  }
 
   Offset getSpotOffset(String id) {
     final spotR = tpArcR + w * 0.024;
@@ -104,7 +79,7 @@ class CourtGeo {
       case 'right_wing':
         return Offset(arcX(0.385), arcY(0.385));
       case 'top_arc':
-      case 'top_of_arc': // Map standard label to offset
+      case 'top_of_arc':
         return Offset(bx, arcY(0));
       case 'left_elbow':
         return Offset(keyL, ftY);
@@ -167,6 +142,74 @@ class BasketballCourtMap extends StatefulWidget {
 
 class _BasketballCourtMapState extends State<BasketballCourtMap> {
   String? _activeTooltipId;
+  String? _randomPulseId;
+  final List<String> _recentPulseIds = [];
+  Timer? _pulseTimer;
+  final _random = math.Random();
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.mode == CourtMapMode.stats) _schedulePulse();
+  }
+
+  @override
+  void dispose() {
+    _pulseTimer?.cancel();
+    super.dispose();
+  }
+
+  // ── Pulse scheduler ────────────────────────────────────────────────────────
+  // Pattern: wait → light up one dot → wait for it to fade → repeat.
+  // When a tooltip is open all random pulsing stops.
+
+  void _schedulePulse() {
+    _pulseTimer?.cancel();
+    // Tiny gap between dots: 100–300ms
+    final delay = 100 + _random.nextInt(200);
+    _pulseTimer = Timer(Duration(milliseconds: delay), () {
+      if (!mounted) return;
+      if (_activeTooltipId != null) {
+        _schedulePulse();
+        return;
+      }
+      if (widget.spots.isEmpty) {
+        _schedulePulse();
+        return;
+      }
+
+      final all = widget.spots.map((s) => s.id).toList();
+
+      // History size: exclude up to half the spots (min 1, max 4)
+      // so with 4 spots we exclude 2, with 10 spots we exclude 4
+      final historySize = (all.length ~/ 2).clamp(1, 4);
+
+      // Build candidate list — exclude recently shown
+      var candidates =
+          all.where((id) => !_recentPulseIds.contains(id)).toList();
+      // Fallback: if all excluded (very few spots), just exclude the last one
+      if (candidates.isEmpty) {
+        candidates = all.where((id) => id != _randomPulseId).toList();
+        if (candidates.isEmpty) candidates = all;
+      }
+
+      final next = candidates[_random.nextInt(candidates.length)];
+
+      // Update history
+      _recentPulseIds.add(next);
+      while (_recentPulseIds.length > historySize) {
+        _recentPulseIds.removeAt(0);
+      }
+
+      setState(() => _randomPulseId = next);
+
+      // Pulse: 1000ms in + 1000ms out = 2000ms. Clear after 2100ms.
+      _pulseTimer = Timer(const Duration(milliseconds: 2100), () {
+        if (mounted) setState(() => _randomPulseId = null);
+        _schedulePulse();
+      });
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -174,6 +217,8 @@ class _BasketballCourtMapState extends State<BasketballCourtMap> {
       onTap: () {
         if (_activeTooltipId != null) {
           setState(() => _activeTooltipId = null);
+          // Re-start pulsing now that tooltip is closed
+          _schedulePulse();
         }
       },
       child: Column(
@@ -186,13 +231,13 @@ class _BasketballCourtMapState extends State<BasketballCourtMap> {
               return Stack(
                 clipBehavior: Clip.none,
                 children: [
-                  // 1. Court Lines
+                  // 1. Court lines
                   Positioned.fill(
                     child: CustomPaint(
                         painter: _CourtLinePainter(geo, widget.themeColor)),
                   ),
 
-                  // 2. Range Zones (if in range mode)
+                  // 2. Range zones
                   if (widget.mode == CourtMapMode.range)
                     Positioned.fill(
                       child: CustomPaint(
@@ -202,7 +247,7 @@ class _BasketballCourtMapState extends State<BasketballCourtMap> {
                       ),
                     ),
 
-                  // 3. Spots Interactive Layer
+                  // 3. Spot / zone interaction layer
                   if (widget.mode == CourtMapMode.range)
                     Positioned.fill(
                       child: GestureDetector(
@@ -210,9 +255,7 @@ class _BasketballCourtMapState extends State<BasketballCourtMap> {
                         onTapUp: (d) {
                           final id =
                               _RangeZonePainter.getZoneAt(geo, d.localPosition);
-                          if (id != null && widget.onSpotTap != null) {
-                            widget.onSpotTap!(id);
-                          }
+                          if (id != null) widget.onSpotTap?.call(id);
                         },
                         child: const SizedBox.expand(),
                       ),
@@ -220,17 +263,32 @@ class _BasketballCourtMapState extends State<BasketballCourtMap> {
                   else
                     ...widget.spots.map((s) {
                       final offset = geo.getSpotOffset(s.id);
+                      final isActive = s.id == _activeTooltipId;
+                      // In stats mode: pulse only if no tooltip is open
+                      final isPulsing = widget.mode == CourtMapMode.stats &&
+                          _activeTooltipId == null &&
+                          s.id == _randomPulseId;
+
                       return Positioned(
                         left: offset.dx - 21,
                         top: offset.dy - 21,
                         child: GestureDetector(
+                          key: ValueKey('spot_${s.id}'),
                           behavior: HitTestBehavior.opaque,
                           onTap: () {
                             if (widget.mode == CourtMapMode.stats) {
                               setState(() {
-                                _activeTooltipId =
-                                    _activeTooltipId == s.id ? null : s.id;
+                                _activeTooltipId = isActive ? null : s.id;
+                                // Stop random pulse immediately
+                                _randomPulseId = null;
                               });
+                              if (_activeTooltipId == null) {
+                                // Tooltip closed → restart random pulsing
+                                _schedulePulse();
+                              } else {
+                                // Tooltip open → stop the scheduler
+                                _pulseTimer?.cancel();
+                              }
                             } else {
                               widget.onSpotTap?.call(s.id);
                             }
@@ -240,8 +298,10 @@ class _BasketballCourtMapState extends State<BasketballCourtMap> {
                             label: s.label,
                             pct: s.pct,
                             attempts: s.attempts,
-                            isSelected:
-                                s.id == widget.selectedId || s.isSelected,
+                            isSelected: s.id == widget.selectedId ||
+                                s.isSelected ||
+                                isActive,
+                            isPulsing: isPulsing,
                             mode: widget.mode,
                             themeColor: widget.themeColor,
                           ),
@@ -249,33 +309,29 @@ class _BasketballCourtMapState extends State<BasketballCourtMap> {
                       );
                     }),
 
-                  // 4. Tooltips (top layer)
+                  // 4. Tooltip (top layer)
                   if (widget.mode == CourtMapMode.stats &&
                       _activeTooltipId != null)
                     ...widget.spots
                         .where((s) => s.id == _activeTooltipId)
                         .map((s) {
                       final offset = geo.getSpotOffset(s.id);
-                      // Clamp tooltip horizontal position so it doesn't overflow
                       final left = (offset.dx - 60).clamp(8.0, geo.w - 128.0);
                       return Positioned(
                         left: left,
-                        top: offset.dy - 64, // above the spot
+                        top: offset.dy - 64,
                         child: _TooltipOverlay(spot: s),
                       );
                     }),
 
-                  // 5. Instruction text (top right)
+                  // 5. Hint text
                   if (widget.mode == CourtMapMode.stats)
                     Positioned(
                       top: 12,
                       right: 12,
-                      child: Text(
-                        'Tap spots for detail',
-                        style: AppText.ui(11,
-                            color: AppColors.text3.withValues(alpha: 0.6),
-                            weight: FontWeight.w600),
-                      ),
+                      child: Text('Tap spots for detail',
+                          style: AppText.ui(13,
+                              color: AppColors.text2, weight: FontWeight.w600)),
                     ),
                 ],
               );
@@ -292,67 +348,8 @@ class _BasketballCourtMapState extends State<BasketballCourtMap> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  Sub-Widgets
+//  Spot Marker
 // ─────────────────────────────────────────────────────────────────────────────
-
-class _TooltipOverlay extends StatelessWidget {
-  final MapSpotData spot;
-  const _TooltipOverlay({required this.spot});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: 120, // fixed width for consistent look
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.border),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.3),
-            blurRadius: 10,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            spot.label,
-            style: AppText.ui(10,
-                color: AppColors.text3,
-                weight: FontWeight.w600,
-                letterSpacing: 0.5),
-            textAlign: TextAlign.center,
-          ),
-          const SizedBox(height: 4),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Text(
-                '${(spot.pct * 100).round()}%',
-                style: AppText.display(18, color: AppColors.text1),
-              ),
-              const SizedBox(width: 4),
-              Padding(
-                padding: const EdgeInsets.only(bottom: 2),
-                child: Text(
-                  '($_made/${spot.attempts})',
-                  style: AppText.ui(10, color: AppColors.text3),
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  int get _made => (spot.pct * spot.attempts).round();
-}
 
 class _CourtSpotMarker extends StatefulWidget {
   final String id;
@@ -360,6 +357,7 @@ class _CourtSpotMarker extends StatefulWidget {
   final double pct;
   final int attempts;
   final bool isSelected;
+  final bool isPulsing;
   final CourtMapMode mode;
   final Color themeColor;
 
@@ -369,6 +367,7 @@ class _CourtSpotMarker extends StatefulWidget {
     required this.pct,
     required this.attempts,
     required this.isSelected,
+    this.isPulsing = false,
     required this.mode,
     required this.themeColor,
   });
@@ -379,25 +378,23 @@ class _CourtSpotMarker extends StatefulWidget {
 
 class _CourtSpotMarkerState extends State<_CourtSpotMarker>
     with SingleTickerProviderStateMixin {
-  late final AnimationController _pulse;
+  late final AnimationController _pulse = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 900),
+  );
 
   @override
   void initState() {
     super.initState();
-    _pulse = AnimationController(
-        vsync: this, duration: const Duration(milliseconds: 800));
-    if (widget.mode == CourtMapMode.setup) {
-      _pulse.repeat(reverse: true);
-    }
+    _applyState();
   }
 
   @override
-  void didUpdateWidget(_CourtSpotMarker oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (widget.mode == CourtMapMode.setup) {
-      if (!_pulse.isAnimating) _pulse.repeat(reverse: true);
-    } else {
-      _pulse.stop();
+  void didUpdateWidget(_CourtSpotMarker old) {
+    super.didUpdateWidget(old);
+    if (old.isSelected != widget.isSelected ||
+        old.isPulsing != widget.isPulsing) {
+      _applyState();
     }
   }
 
@@ -407,16 +404,51 @@ class _CourtSpotMarkerState extends State<_CourtSpotMarker>
     super.dispose();
   }
 
-  @override
-  Widget build(BuildContext context) {
+  // ── Clean state machine ────────────────────────────────────────────────────
+
+  void _applyState() {
     if (widget.mode == CourtMapMode.setup) {
-      return _buildSetupMarker();
+      // Setup mode: selected dot breathes, others are static
+      if (widget.isSelected) {
+        _pulse.duration = const Duration(milliseconds: 900);
+        _pulse.repeat(reverse: true);
+      } else {
+        _pulse.stop();
+        _pulse.reset();
+      }
+      return;
+    }
+
+    // Stats mode
+    if (widget.isSelected) {
+      // Continuous slow breathing — selected dot
+      _pulse.stop();
+      _pulse.duration = const Duration(milliseconds: 1300);
+      _pulse.repeat(reverse: true);
+    } else if (widget.isPulsing) {
+      _pulse.stop();
+      _pulse.duration = const Duration(milliseconds: 1000);
+      _pulse.repeat(reverse: true);
     } else {
-      return _buildStatsMarker();
+      // Not selected, not pulsing → smoothly fade to zero and stop
+      _pulse.stop();
+      if (_pulse.value > 0) {
+        _pulse.duration = const Duration(milliseconds: 300);
+        _pulse.reverse();
+      } else {
+        _pulse.reset();
+      }
     }
   }
 
-  Widget _buildSetupMarker() {
+  // ── Build ──────────────────────────────────────────────────────────────────
+
+  @override
+  Widget build(BuildContext context) =>
+      widget.mode == CourtMapMode.setup ? _setupMarker() : _statsMarker();
+
+  // Setup: grey dot, selected = gold pulsing ring
+  Widget _setupMarker() {
     return SizedBox(
       width: 42,
       height: 42,
@@ -460,18 +492,17 @@ class _CourtSpotMarkerState extends State<_CourtSpotMarker>
     );
   }
 
-  Widget _buildStatsMarker() {
-    final Color dotColor = PerformanceGuide.colorFor(widget.pct);
-
-    const radius = 4.5;
+  // Stats: identical animation to setup — fixed dot, ring expands & fades
+  Widget _statsMarker() {
+    final dotColor = PerformanceGuide.colorFor(widget.pct);
+    final isActive = widget.isSelected || widget.isPulsing;
 
     return SizedBox(
       width: 42,
       height: 42,
-      child: Stack(
-        alignment: Alignment.center,
-        children: [
-          // Pulse Ring Effect
+      child: Stack(alignment: Alignment.center, children: [
+        // Ring — exact same math as setup marker
+        if (isActive)
           AnimatedBuilder(
             animation: _pulse,
             builder: (_, __) => Container(
@@ -486,26 +517,85 @@ class _CourtSpotMarkerState extends State<_CourtSpotMarker>
               ),
             ),
           ),
-          // Fill
-          Container(
-            width: radius * 2,
-            height: radius * 2,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: dotColor,
-              boxShadow: [
-                BoxShadow(
-                    color: dotColor.withValues(alpha: 0.40),
-                    blurRadius: 8,
-                    spreadRadius: 1)
-              ],
-            ),
+        // Dot — fixed size, just like setup marker
+        AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          width: widget.isSelected ? 14 : 11,
+          height: widget.isSelected ? 14 : 11,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: dotColor,
+            boxShadow: widget.isSelected
+                ? [
+                    BoxShadow(
+                        color: dotColor.withValues(alpha: 0.50),
+                        blurRadius: 10,
+                        spreadRadius: 1)
+                  ]
+                : null,
           ),
-        ],
-      ),
+        ),
+      ]),
     );
   }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Tooltip overlay
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _TooltipOverlay extends StatelessWidget {
+  final MapSpotData spot;
+  const _TooltipOverlay({required this.spot});
+
+  int get _made => (spot.pct * spot.attempts).round();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 120,
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.border),
+        boxShadow: [
+          BoxShadow(
+              color: Colors.black.withValues(alpha: 0.3),
+              blurRadius: 10,
+              offset: const Offset(0, 4)),
+        ],
+      ),
+      child: Column(mainAxisSize: MainAxisSize.min, children: [
+        Text(spot.label,
+            style: AppText.ui(10,
+                color: AppColors.text3,
+                weight: FontWeight.w600,
+                letterSpacing: 0.5),
+            textAlign: TextAlign.center),
+        const SizedBox(height: 4),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Text('${(spot.pct * 100).round()}%',
+                style: AppText.display(18, color: AppColors.text1)),
+            const SizedBox(width: 4),
+            Padding(
+              padding: const EdgeInsets.only(bottom: 2),
+              child: Text('($_made/${spot.attempts})',
+                  style: AppText.ui(10, color: AppColors.text3)),
+            ),
+          ],
+        ),
+      ]),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Legend
+// ─────────────────────────────────────────────────────────────────────────────
 
 class _MapLegend extends StatelessWidget {
   @override
@@ -525,29 +615,26 @@ class _MapLegend extends StatelessWidget {
       ),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-        children: items.map((item) {
-          return Row(children: [
-            Container(
-              width: 10,
-              height: 10,
-              decoration: BoxDecoration(
-                color: item.$2,
-                shape: BoxShape.circle,
-              ),
-            ),
-            const SizedBox(width: 8),
-            Text(item.$1,
-                style: AppText.ui(12,
-                    color: AppColors.text2, weight: FontWeight.w600)),
-          ]);
-        }).toList(),
+        children: items
+            .map((item) => Row(children: [
+                  Container(
+                      width: 10,
+                      height: 10,
+                      decoration: BoxDecoration(
+                          color: item.$2, shape: BoxShape.circle)),
+                  const SizedBox(width: 8),
+                  Text(item.$1,
+                      style: AppText.ui(12,
+                          color: AppColors.text2, weight: FontWeight.w600)),
+                ]))
+            .toList(),
       ),
     );
   }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  Painters
+//  Painters (unchanged)
 // ─────────────────────────────────────────────────────────────────────────────
 
 class _CourtLinePainter extends CustomPainter {
@@ -558,9 +645,7 @@ class _CourtLinePainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     canvas.save();
-    canvas.clipRect(
-        Rect.fromLTWH(0, 0, g.w, g.baseY + 2)); // Slightly past baseline
-
+    canvas.clipRect(Rect.fromLTWH(0, 0, g.w, g.baseY + 2));
     canvas.drawRect(Rect.fromLTWH(0, 0, g.w, g.h),
         Paint()..color = const Color(0xFF161618));
 
@@ -569,7 +654,6 @@ class _CourtLinePainter extends CustomPainter {
       ..strokeWidth = 1.4
       ..style = PaintingStyle.stroke
       ..isAntiAlias = true;
-
     final faint = Paint()
       ..color = const Color(0xFF353540).withValues(alpha: 0.35)
       ..strokeWidth = 1.0
@@ -582,27 +666,22 @@ class _CourtLinePainter extends CustomPainter {
     canvas.drawLine(const Offset(0, 1), Offset(g.w, 1), line);
 
     canvas.drawArc(
-      Rect.fromCircle(center: Offset(g.bx, g.by), radius: g.tpArcR),
-      g.tpStartAngle,
-      g.tpSweepAngle,
-      false,
-      line,
-    );
+        Rect.fromCircle(center: Offset(g.bx, g.by), radius: g.tpArcR),
+        g.tpStartAngle,
+        g.tpSweepAngle,
+        false,
+        line);
     canvas.drawLine(
         Offset(g.tpL, g.tpIntersectY), Offset(g.tpL, g.baseY), line);
     canvas.drawLine(
         Offset(g.tpR, g.tpIntersectY), Offset(g.tpR, g.baseY), line);
-
     canvas.drawRect(Rect.fromLTRB(g.keyL, g.ftY, g.keyR, g.baseY), line);
-
     canvas.drawArc(Rect.fromCircle(center: Offset(g.bx, g.ftY), radius: g.ftR),
         math.pi, math.pi, false, line);
     canvas.drawArc(Rect.fromCircle(center: Offset(g.bx, g.ftY), radius: g.ftR),
         0, math.pi, false, faint);
-
     canvas.drawArc(Rect.fromCircle(center: Offset(g.bx, g.by), radius: g.raR),
         math.pi, math.pi, false, faint);
-
     canvas.drawCircle(
         Offset(g.bx, g.by),
         g.w * 0.040,
@@ -610,7 +689,6 @@ class _CourtLinePainter extends CustomPainter {
           ..color = themeColor.withValues(alpha: 0.55)
           ..strokeWidth = 2.0
           ..style = PaintingStyle.stroke);
-
     canvas.drawLine(
       Offset(g.bx - g.w * 0.060, g.by + g.w * 0.074),
       Offset(g.bx + g.w * 0.060, g.by + g.w * 0.074),
@@ -640,8 +718,7 @@ class _RangeZonePainter extends CustomPainter {
         p.dx >= g.keyL && p.dx <= g.keyR && p.dy >= g.ftY && p.dy <= g.baseY;
     if (!inKey) return 'mid';
     final dx = p.dx - g.bx, dy = p.dy - g.by;
-    final inLayup = dx * dx + dy * dy <= g.raR * g.raR;
-    return inLayup ? 'layup' : 'close';
+    return dx * dx + dy * dy <= g.raR * g.raR ? 'layup' : 'close';
   }
 
   static Path _tp(CourtGeo g) {
@@ -696,9 +773,8 @@ class _RangeZonePainter extends CustomPainter {
     if (selectedId != null) {
       final z = zones.firstWhere((z) => z.id == selectedId,
           orElse: () => zones.first);
-      final p = buildZonePath(g, z.tier);
       canvas.drawPath(
-          p,
+          buildZonePath(g, z.tier),
           Paint()
             ..color = themeColor.withValues(alpha: 0.16)
             ..style = PaintingStyle.fill);

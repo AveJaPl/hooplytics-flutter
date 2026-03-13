@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import '../main.dart';
@@ -45,11 +46,13 @@ class _StatsScreenState extends State<StatsScreen>
   String _activeFilter = 'All time';
   DateTime? _filterStartDate;
   DateTime? _filterEndDate;
+  StreamSubscription? _updateSub;
 
   @override
   void initState() {
     super.initState();
     _loadStats();
+    _updateSub = SessionService().updates.listen((_) => setState(() => _loadStats()));
   }
 
   void _loadStats() {
@@ -176,6 +179,7 @@ class _StatsScreenState extends State<StatsScreen>
   @override
   void dispose() {
     _entry.dispose();
+    _updateSub?.cancel();
     super.dispose();
   }
 

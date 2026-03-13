@@ -56,15 +56,6 @@ class _ManualSessionDetailScreenState extends State<ManualSessionDetailScreen>
       await SessionService().deleteSession(_originalSession.id!);
       if (mounted) {
         Navigator.pop(context);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Session deleted', style: AppText.ui(13)),
-            backgroundColor: AppColors.surface,
-            behavior: SnackBarBehavior.floating,
-            shape:
-                RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-          ),
-        );
       }
     } catch (e) {
       if (mounted) {

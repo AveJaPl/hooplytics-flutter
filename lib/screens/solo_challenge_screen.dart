@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import '../main.dart';
 import '../utils/haptics.dart';
 import '../models/session.dart';
@@ -270,7 +269,7 @@ class _SoloChallengeScreenState extends State<SoloChallengeScreen>
 
   void _undo() {
     if (_log.isEmpty || widget.modeId == 'beat_the_clock') return;
-    HapticFeedback.selectionClick();
+    Haptics.selectionClick();
     setState(() {
       final last = _log.removeLast();
       _attempts--;
@@ -307,7 +306,7 @@ class _SoloChallengeScreenState extends State<SoloChallengeScreen>
       return;
     }
 
-    _saveSession();
+
     Future.delayed(const Duration(milliseconds: 400), () {
       if (!mounted) return;
       showModalBottomSheet(
@@ -323,11 +322,11 @@ class _SoloChallengeScreenState extends State<SoloChallengeScreen>
           attempts: _attempts,
           log: List.unmodifiable(_log),
           extra: _buildExtra(),
-          onRetry: () {
-            Navigator.pop(context);
-            _restart();
+          onDiscard: () => Navigator.of(context).popUntil((r) => r.isFirst),
+          onSave: () async {
+            await _saveSession();
+            if (mounted) Navigator.of(context).popUntil((r) => r.isFirst);
           },
-          onDone: () => Navigator.of(context).popUntil((r) => r.isFirst),
         ),
       );
     });
@@ -467,28 +466,7 @@ class _SoloChallengeScreenState extends State<SoloChallengeScreen>
     }
   }
 
-  void _restart() {
-    setState(() {
-      _made = 0;
-      _attempts = 0;
-      _log.clear();
-      _gameOver = false;
-      _started = false;
-      _streak = 0;
-      _bestStreak = 0;
-      _secondsLeft = _clockDuration;
-      _ftLevel = 1;
-      _ftConsecutive = 0;
-      _hsSpotIndex = 0;
-      _hsResults = List.generate(
-          _hsSpots.length, (_) => List.filled(_hsShotsPerSpot, null));
-      _atwSpot = 0;
-      _atwStuck = false;
-      _atwConsecutiveMisses = 0;
-      _mikanRep = 0;
-      _mikanRight = true;
-    });
-  }
+  // _restart method removed as per instruction
 
   // ── build ─────────────────────────────────────────────────────────────────
 
@@ -1098,7 +1076,7 @@ class _SoloChallengeScreenState extends State<SoloChallengeScreen>
             const SizedBox(width: 10),
             GestureDetector(
                 onTap: () {
-                  HapticFeedback.selectionClick();
+                  Haptics.selectionClick();
                   _endGame('Finished early');
                 },
                 child: Container(
@@ -1126,7 +1104,7 @@ class _SoloResultSheet extends StatelessWidget {
   final int made, attempts;
   final List<bool> log;
   final Map<String, String> extra;
-  final VoidCallback onRetry, onDone;
+  final VoidCallback onDiscard, onSave;
 
   const _SoloResultSheet({
     required this.modeId,
@@ -1136,8 +1114,8 @@ class _SoloResultSheet extends StatelessWidget {
     required this.attempts,
     required this.log,
     required this.extra,
-    required this.onRetry,
-    required this.onDone,
+    required this.onDiscard,
+    required this.onSave,
   });
 
   String get _pct =>
@@ -1250,42 +1228,39 @@ class _SoloResultSheet extends StatelessWidget {
                               : AppColors.red.withValues(alpha: 0.5))))
                   .toList()),
         ],
-        const SizedBox(height: 20),
+        const SizedBox(height: 28),
         Row(children: [
           Expanded(
-              child: GestureDetector(
-                  onTap: onRetry,
-                  child: Container(
-                      height: 50,
-                      decoration: BoxDecoration(
-                          border: Border.all(color: AppColors.border),
-                          borderRadius: BorderRadius.circular(12)),
-                      child: Center(
-                          child: Text('Try Again',
-                              style: AppText.ui(14,
-                                  weight: FontWeight.w600,
-                                  color: AppColors.text2)))))),
+            child: GestureDetector(
+              onTap: onDiscard,
+              child: Container(
+                  height: 52,
+                  decoration: BoxDecoration(
+                      color: AppColors.surfaceHi,
+                      borderRadius: BorderRadius.circular(14)),
+                  child: Center(
+                      child: Text('Discard',
+                          style: AppText.ui(14,
+                              weight: FontWeight.w700,
+                              color: AppColors.text2)))),
+            ),
+          ),
           const SizedBox(width: 12),
           Expanded(
-              flex: 2,
-              child: GestureDetector(
-                  onTap: onDone,
-                  child: Container(
-                      height: 50,
-                      decoration: BoxDecoration(
-                          color: color,
-                          borderRadius: BorderRadius.circular(12),
-                          boxShadow: [
-                            BoxShadow(
-                                color: color.withValues(alpha: 0.25),
-                                blurRadius: 12,
-                                offset: const Offset(0, 4))
-                          ]),
-                      child: Center(
-                          child: Text('Done',
-                              style: AppText.ui(14,
-                                  weight: FontWeight.w700,
-                                  color: Colors.black)))))),
+            child: GestureDetector(
+              onTap: onSave,
+              child: Container(
+                  height: 52,
+                  decoration: BoxDecoration(
+                      color: color,
+                      borderRadius: BorderRadius.circular(14)),
+                  child: Center(
+                      child: Text('Save',
+                          style: AppText.ui(14,
+                              weight: FontWeight.w700,
+                              color: Colors.black)))),
+            ),
+          ),
         ]),
       ]),
     );

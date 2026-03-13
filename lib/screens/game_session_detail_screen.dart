@@ -3,6 +3,7 @@ import '../main.dart';
 import '../utils/haptics.dart';
 import 'history_screen.dart';
 import '../widgets/basketball_court_map.dart';
+import '../models/shot.dart';
 import '../services/session_service.dart';
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -65,15 +66,6 @@ class _State extends State<GameSessionDetailScreen>
       await SessionService().deleteSession(e.originalSession.id!);
       if (mounted) {
         Navigator.pop(context);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Session deleted', style: AppText.ui(13)),
-            backgroundColor: AppColors.surface,
-            behavior: SnackBarBehavior.floating,
-            shape:
-                RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-          ),
-        );
       }
     } catch (e) {
       if (mounted) {
@@ -137,9 +129,9 @@ class _State extends State<GameSessionDetailScreen>
               ..._modeContent(),
               if (e.shotLog != null && e.shotLog!.isNotEmpty) ...[
                 const SizedBox(height: 24),
-                _accuracyProgression(),
-                const SizedBox(height: 24),
                 _shotLogSection(),
+                const SizedBox(height: 24),
+                _accuracyProgression(),
               ],
               const SizedBox(height: 48),
               _deleteButton(),
@@ -1022,15 +1014,24 @@ class _State extends State<GameSessionDetailScreen>
       Container(
           padding: const EdgeInsets.all(20),
           decoration: _box(),
-          child:
-              Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
-            _bigStat('${e.made}', 'MADE', e.color),
-            _vDiv(),
-            _bigStat('${e.attempts}', 'ATTEMPTS', AppColors.text1),
-            _vDiv(),
-            _bigStat(e.pctStr, 'ACC', e.color),
+          child: Column(children: [
+            Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
+              _bigStat('${e.made}', 'MADE', e.color),
+              _vDiv(),
+              _bigStat(
+                  '${(e.hoopSession?.swishCount ?? 0) > 0 ? e.hoopSession!.swishCount : (e.originalSession.swishes)}',
+                  'SWISH',
+                  e.color),
+            ]),
+            const SizedBox(height: 20),
+            Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
+              _bigStat('${e.attempts! - e.made!}', 'MISSED', AppColors.text2),
+              _vDiv(),
+              _bigStat('${e.attempts}', 'TOTAL', AppColors.text1),
+            ]),
           ])),
       const SizedBox(height: 14),
+      _insightsGrid(),
       _label('COURT MAP'),
       BasketballCourtMap(
         themeColor: e.color,
@@ -1049,7 +1050,7 @@ class _State extends State<GameSessionDetailScreen>
     final points = <double>[];
     int m = 0;
     for (int i = 0; i < log.length; i++) {
-      if (log[i]) m++;
+      if (log[i] != ShotResult.miss) m++;
       points.add(m / (i + 1));
     }
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -1071,46 +1072,100 @@ class _State extends State<GameSessionDetailScreen>
 
   Widget _shotLogSection() {
     final log = e.shotLog!;
-    final made = log.where((b) => b).length;
-    final missed = log.length - made;
+    final modeColor = e.color;
+
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      _label('SHOT LOG · ${log.length} shots'),
+      _label('SHOT LOG'),
       Container(
           padding: const EdgeInsets.all(18),
           decoration: _box(),
           child: Column(children: [
             Wrap(
-                spacing: 5,
-                runSpacing: 5,
+                spacing: 6,
+                runSpacing: 6,
                 children: log
                     .take(60)
-                    .map((m) => Container(
+                    .map((r) => Container(
                         width: 12,
                         height: 12,
                         decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: m ? AppColors.green : AppColors.surfaceHi)))
+                          shape: BoxShape.circle,
+                          color: r == ShotResult.swish ? modeColor : Colors.transparent,
+                          border: Border.all(
+                            color: r == ShotResult.miss
+                                ? AppColors.border
+                                : modeColor,
+                            width: 1.5,
+                          ),
+                        )))
                     .toList()),
-            const SizedBox(height: 14),
+            const SizedBox(height: 16),
             Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-              Container(
-                  width: 10,
-                  height: 10,
-                  decoration: const BoxDecoration(
-                      shape: BoxShape.circle, color: AppColors.green)),
-              const SizedBox(width: 6),
-              Text('$made made', style: AppText.ui(11, color: AppColors.text2)),
+              _legendDot(modeColor, 'made', isOutline: true),
               const SizedBox(width: 16),
-              Container(
-                  width: 10,
-                  height: 10,
-                  decoration: const BoxDecoration(
-                      shape: BoxShape.circle, color: AppColors.surfaceHi)),
-              const SizedBox(width: 6),
-              Text('$missed missed',
-                  style: AppText.ui(11, color: AppColors.text2)),
+              _legendDot(modeColor, 'swish', isOutline: false),
+              const SizedBox(width: 16),
+              _legendDot(AppColors.border, 'missed', isOutline: true),
             ]),
           ])),
+    ]);
+  }
+
+  Widget _insightsGrid() {
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      _label('GAME INSIGHTS'),
+      GridView.count(
+        crossAxisCount: 2,
+        shrinkWrap: true,
+        physics: const NeverScrollableScrollPhysics(),
+        mainAxisSpacing: 10,
+        crossAxisSpacing: 10,
+        childAspectRatio: 1.6,
+        children: [
+          _insightCard('MAX STREAK', '${e.hoopSession?.maxStreak ?? 0}',
+              Icons.local_fire_department_rounded, e.color),
+          _insightCard('SWISH STREAK', '${e.hoopSession?.swishStreak ?? 0}',
+              Icons.stars_rounded, e.color),
+        ],
+      ),
+    ]);
+  }
+
+  Widget _insightCard(
+      String label, String value, IconData icon, Color iconColor) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: _box(),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Icon(icon, size: 13, color: iconColor),
+          const SizedBox(width: 6),
+          Text(label,
+              style: AppText.ui(10,
+                  color: AppColors.text2,
+                  weight: FontWeight.w800,
+                  letterSpacing: 0.2)),
+        ]),
+        const Spacer(),
+        Text(value,
+            style: AppText.ui(16, color: AppColors.text1, weight: FontWeight.w800)),
+      ]),
+    );
+  }
+
+  Widget _legendDot(Color color, String label, {required bool isOutline}) {
+    return Row(mainAxisSize: MainAxisSize.min, children: [
+      Container(
+        width: 10,
+        height: 10,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: isOutline ? Colors.transparent : color,
+          border: Border.all(color: color, width: 1.5),
+        ),
+      ),
+      const SizedBox(width: 6),
+      Text(label, style: AppText.ui(11, color: AppColors.text2)),
     ]);
   }
 

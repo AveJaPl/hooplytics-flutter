@@ -24,15 +24,13 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart' hide Session;
 
 import '../main.dart';
-import '../models/session.dart';
 import '../models/shot.dart';
+import '../models/session.dart';
 import '../services/background_asr_service.dart';
 import '../services/session_service.dart';
 import '../utils/haptics.dart';
 import '../utils/performance.dart';
 import 'session_setup_screen.dart';
-
-enum ShotResult { miss, make, swish }
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  SCREEN WIDGET
@@ -307,7 +305,7 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
       _log.add(swish ? ShotResult.swish : ShotResult.make);
     });
     _flash(
-        swish ? '+ SWISH' : '+ MADE', swish ? AppColors.gold : AppColors.green);
+        swish ? '+ SWISH' : '+ MADE', swish ? AppColors.green : AppColors.gold);
     (swish ? _swishPressCtrl : _makePressCtrl).forward(from: 0);
   }
 
@@ -619,9 +617,9 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
                           decoration: BoxDecoration(
                             shape: BoxShape.circle,
                             color: r == ShotResult.swish
-                                ? AppColors.gold
+                                ? AppColors.green
                                 : r == ShotResult.make
-                                    ? AppColors.green
+                                    ? AppColors.gold
                                     : AppColors.red.withValues(alpha: 0.55),
                           )))
                       .toList(),
@@ -691,10 +689,10 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
               child: _ActionBtn(
                   label: 'MISS',
                   icon: Icons.close_rounded,
-                  textColor: AppColors.text2,
+                  textColor: AppColors.red,
                   iconColor: AppColors.red,
-                  bg: AppColors.surface,
-                  border: AppColors.border,
+                  bg: AppColors.red.withValues(alpha: 0.1),
+                  border: AppColors.red.withValues(alpha: 0.3),
                   onTap: _applyMiss),
             ),
           ),
@@ -706,13 +704,12 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
             builder: (_, __) => Transform.scale(
               scale: _makeAnim.value,
               child: _ActionBtn(
-                  label: 'MAKE',
-                  icon: Icons.check_rounded,
-                  textColor: AppColors.bg,
-                  iconColor: AppColors.bg,
-                  bg: AppColors.green,
-                  border: Colors.transparent,
-                  shadow: AppColors.green.withValues(alpha: 0.25),
+                  label: 'MADE',
+                  icon: Icons.check_circle_outline_rounded,
+                  textColor: AppColors.gold,
+                  iconColor: AppColors.gold,
+                  bg: Colors.transparent,
+                  border: AppColors.gold,
                   onTap: () => _applyMake(swish: false)),
             ),
           ),
@@ -725,12 +722,12 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
               scale: _swishAnim.value,
               child: _ActionBtn(
                   label: 'SWISH',
-                  icon: Icons.whatshot_rounded,
+                  icon: Icons.auto_awesome_rounded,
                   textColor: AppColors.bg,
                   iconColor: AppColors.bg,
-                  bg: AppColors.gold,
+                  bg: AppColors.green,
                   border: Colors.transparent,
-                  shadow: AppColors.gold.withValues(alpha: 0.25),
+                  shadow: AppColors.green.withValues(alpha: 0.25),
                   onTap: () => _applyMake(swish: true)),
             ),
           ),
@@ -1212,8 +1209,8 @@ class _SummarySheetState extends State<_SummarySheet> {
           Container(height: 1, color: AppColors.borderSub),
           const SizedBox(height: 18),
           Row(children: [
-            _SumTile('MADE', '${widget.made}', AppColors.green),
-            _SumTile('SWISHES', '${widget.swishes}', AppColors.gold),
+            _SumTile('MADE', '${widget.made}', AppColors.gold),
+            _SumTile('SWISHES', '${widget.swishes}', AppColors.green),
             _SumTile('ACCURACY', _pct, _gc),
             _SumTile('STREAK', '${widget.bestStreak}', AppColors.gold),
           ]),
@@ -1282,7 +1279,7 @@ class _SummarySheetState extends State<_SummarySheet> {
                                 height: 20,
                                 child: CircularProgressIndicator(
                                     color: AppColors.bg, strokeWidth: 2.5))
-                            : Text('Save Session',
+                            : Text('Save',
                                 style: AppText.ui(14,
                                     weight: FontWeight.w700,
                                     color: AppColors.bg)))),
@@ -1322,8 +1319,8 @@ class _VoiceTipsSheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     const tips = [
-      ('"MAKE"', 'Trafienie', AppColors.green),
-      ('"SWISH"', 'Swish', AppColors.gold),
+      ('"MAKE"', 'Trafienie', AppColors.gold),
+      ('"SWISH"', 'Swish', AppColors.green),
       ('"MISS"', 'Pudło', AppColors.red),
       ('"UNDO"', 'Cofnij', AppColors.blue),
       ('"DONE"', 'Koniec sesji', AppColors.text2),

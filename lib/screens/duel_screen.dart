@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import '../main.dart';
 import '../utils/haptics.dart';
 import '../models/session.dart';
@@ -104,7 +103,7 @@ class _DuelScreenState extends State<DuelScreen> with TickerProviderStateMixin {
               ? _DuelPhase.handoff
               : _DuelPhase.result;
           if (_phase == _DuelPhase.result) {
-            _saveSession();
+            // Auto-save removed as per standardization request
           }
         });
         _entry.forward(from: 0);
@@ -114,7 +113,7 @@ class _DuelScreenState extends State<DuelScreen> with TickerProviderStateMixin {
 
   void _undo() {
     if (_curLog.isEmpty) return;
-    HapticFeedback.selectionClick();
+    Haptics.selectionClick();
     setState(() {
       final last = _curLog.removeLast();
       if (_phase == _DuelPhase.p1playing) {
@@ -320,7 +319,7 @@ class _DuelScreenState extends State<DuelScreen> with TickerProviderStateMixin {
             _SmBtn(
                 icon: Icons.arrow_back_ios_new_rounded,
                 onTap: () {
-                  HapticFeedback.selectionClick();
+                  Haptics.selectionClick();
                   setState(() {
                     _phase = _DuelPhase.setup;
                     _p1made = 0;
@@ -631,47 +630,41 @@ class _DuelScreenState extends State<DuelScreen> with TickerProviderStateMixin {
                   winner: !tie && !p1wins)),
         ]),
         const SizedBox(height: 24),
+        const SizedBox(height: 28),
         Row(children: [
           Expanded(
-              child: GestureDetector(
-                  onTap: () {
-                    HapticFeedback.selectionClick();
-                    setState(() {
-                      _p1made = 0;
-                      _p1attempts = 0;
-                      _p1log.clear();
-                      _p2made = 0;
-                      _p2attempts = 0;
-                      _p2log.clear();
-                      _phase = _DuelPhase.setup;
-                      _entry.forward(from: 0);
-                    });
-                  },
-                  child: Container(
-                      height: 50,
-                      decoration: BoxDecoration(
-                          border: Border.all(color: AppColors.border),
-                          borderRadius: BorderRadius.circular(12)),
-                      child: Center(
-                          child: Text('Rematch',
-                              style: AppText.ui(14,
-                                  weight: FontWeight.w600,
-                                  color: AppColors.text2)))))),
+            child: GestureDetector(
+              onTap: () => Navigator.of(context).popUntil((r) => r.isFirst),
+              child: Container(
+                  height: 52,
+                  decoration: BoxDecoration(
+                      color: AppColors.surfaceHi,
+                      borderRadius: BorderRadius.circular(14)),
+                  child: Center(
+                      child: Text('Discard',
+                          style: AppText.ui(14,
+                              weight: FontWeight.w700,
+                              color: AppColors.text2)))),
+            ),
+          ),
           const SizedBox(width: 12),
           Expanded(
-              flex: 2,
-              child: GestureDetector(
-                  onTap: () => Navigator.of(context).popUntil((r) => r.isFirst),
-                  child: Container(
-                      height: 50,
-                      decoration: BoxDecoration(
-                          color: AppColors.gold,
-                          borderRadius: BorderRadius.circular(12)),
-                      child: Center(
-                          child: Text('Done',
-                              style: AppText.ui(14,
-                                  weight: FontWeight.w700,
-                                  color: AppColors.bg)))))),
+            child: GestureDetector(
+              onTap: () async {
+                await _saveSession();
+                if (mounted) Navigator.of(context).popUntil((r) => r.isFirst);
+              },
+              child: Container(
+                  height: 52,
+                  decoration: BoxDecoration(
+                      color: AppColors.gold,
+                      borderRadius: BorderRadius.circular(14)),
+                  child: Center(
+                      child: Text('Save',
+                          style: AppText.ui(14,
+                              weight: FontWeight.w700, color: AppColors.bg)))),
+            ),
+          ),
         ]),
       ]),
     );

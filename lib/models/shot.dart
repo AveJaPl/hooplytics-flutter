@@ -43,3 +43,5 @@ class Shot {
     );
   }
 }
+
+enum ShotResult { miss, make, swish }
