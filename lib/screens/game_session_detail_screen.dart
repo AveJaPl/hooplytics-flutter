@@ -127,7 +127,7 @@ class _State extends State<GameSessionDetailScreen>
               _heroCard(),
               const SizedBox(height: 24),
               ..._modeContent(),
-              if (e.shotLog != null && e.shotLog!.isNotEmpty) ...[
+              if (e.shotLog != null && e.shotLog!.isNotEmpty && g.modeId != 'duel') ...[
                 const SizedBox(height: 24),
                 _shotLogSection(),
                 const SizedBox(height: 24),
@@ -408,17 +408,19 @@ class _State extends State<GameSessionDetailScreen>
     final p2n = g.stats['p2Name'] as String? ?? 'P2';
     final p1m = g.stats['p1Made'] as int? ?? 0;
     final p1a = g.stats['p1Attempts'] as int? ?? 0;
+    final p1sw = g.stats['p1Swishes'] as int? ?? 0;
     final p2m = g.stats['p2Made'] as int? ?? 0;
     final p2a = g.stats['p2Attempts'] as int? ?? 0;
+    final p2sw = g.stats['p2Swishes'] as int? ?? 0;
     final win = g.stats['winner'] as String? ?? '—';
-    final p1log = (g.stats['p1Log'] as List?)?.cast<bool>() ?? [];
-    final p2log = (g.stats['p2Log'] as List?)?.cast<bool>() ?? [];
+    // Backward-compatible: old entries store List<bool>, new store List<int> (0/1/2)
+    final p1logRaw = (g.stats['p1Log'] as List?) ?? [];
+    final p2logRaw = (g.stats['p2Log'] as List?) ?? [];
+    final p1log = p1logRaw.map(_normaliseShot).toList();
+    final p2log = p2logRaw.map(_normaliseShot).toList();
     final p1pct = p1a > 0 ? p1m / p1a : 0.0;
     final p2pct = p2a > 0 ? p2m / p2a : 0.0;
     final p1wins = p1pct >= p2pct;
-    // Duel player colors — these are identity colors, not performance colors
-    const c1 = AppColors.gold;
-    const c2 = AppColors.blue;
 
     return [
       _label('RESULT'),
@@ -435,50 +437,106 @@ class _State extends State<GameSessionDetailScreen>
               child:
                   Row(mainAxisAlignment: MainAxisAlignment.center, children: [
             const Text('🏆 ', style: TextStyle(fontSize: 24)),
-            Text('$win wins!',
+            Text(win == 'TIE' ? "IT'S A TIE" : '$win wins!',
                 style: AppText.ui(22, weight: FontWeight.w800, color: e.color)),
           ]))),
       const SizedBox(height: 16),
       _label('HEAD TO HEAD'),
-      Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Expanded(child: _playerCard(p1n, p1m, p1a, p1log, c1, p1wins)),
-        const SizedBox(width: 12),
-        Expanded(child: _playerCard(p2n, p2m, p2a, p2log, c2, !p1wins)),
-      ]),
+      IntrinsicHeight(
+        child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          Expanded(child: _playerCard(p1n, p1m, p1a, p1sw, e.color, p1wins)),
+          const SizedBox(width: 12),
+          Expanded(child: _playerCard(p2n, p2m, p2a, p2sw, e.color, !p1wins)),
+        ]),
+      ),
       const SizedBox(height: 16),
-      _label('ACCURACY COMPARISON'),
+      _label('DIRECT COMPARISON'),
       Container(
           padding: const EdgeInsets.all(20),
           decoration: _box(),
           child: Column(children: [
-            _accBar(p1n, p1pct, c1),
-            const SizedBox(height: 12),
-            _accBar(p2n, p2pct, c2),
+            _duelCompareRow('Accuracy', '${(p1pct * 100).round()}%', '${(p2pct * 100).round()}%', e.color, e.color, p1pct >= p2pct, p2pct >= p1pct),
+            const SizedBox(height: 10),
+            _duelCompareRow('Made', '$p1m', '$p2m', e.color, e.color, p1m >= p2m, p2m >= p1m),
+            if (p1sw > 0 || p2sw > 0) ...[
+              const SizedBox(height: 10),
+              _duelCompareRow('Swishes ✨', '$p1sw', '$p2sw', e.color, e.color, p1sw >= p2sw, p2sw >= p1sw),
+            ],
           ])),
+      const SizedBox(height: 16),
+      if (p1log.isNotEmpty || p2log.isNotEmpty) ...[
+        _label('SHOT LOGS'),
+        Container(
+          padding: const EdgeInsets.all(18),
+          decoration: BoxDecoration(
+              color: AppColors.surface,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: AppColors.border)),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            // Shared legend — same style as live sessions
+            Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+              _duelLegendDot(e.color, 'swish', filled: true),
+              const SizedBox(width: 16),
+              _duelLegendDot(e.color, 'made', filled: false),
+              const SizedBox(width: 16),
+              _duelLegendDot(AppColors.border, 'miss', filled: false),
+            ]),
+            if (p1log.isNotEmpty) ...[
+              const SizedBox(height: 16),
+              Text(p1n,
+                  style: AppText.ui(11,
+                      color: AppColors.text2, weight: FontWeight.w700)),
+              const SizedBox(height: 8),
+              _duelDots(p1log, e.color),
+            ],
+            if (p2log.isNotEmpty) ...[
+              const SizedBox(height: 16),
+              Text(p2n,
+                  style: AppText.ui(11,
+                      color: AppColors.text2, weight: FontWeight.w700)),
+              const SizedBox(height: 8),
+              _duelDots(p2log, e.color),
+            ],
+          ]),
+        ),
+      ],
     ];
   }
 
-  Widget _playerCard(String name, int made, int att, List<bool> log,
+  /// Normalise log entry: bool (old format) or int (new format 0/1/2)
+  /// Returns 0=miss, 1=make, 2=swish
+  int _normaliseShot(dynamic v) {
+    if (v is bool) return v ? 1 : 0;
+    if (v is int) return v;
+    return 0;
+  }
+
+  Widget _playerCard(String name, int made, int att, int swishes,
       Color color, bool winner) {
     final pct = att > 0 ? made / att : 0.0;
     return Container(
         padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
-            color: winner ? color.withValues(alpha: 0.07) : AppColors.surface,
+            color: winner ? color.withValues(alpha: 0.08) : color.withValues(alpha: 0.03),
             border: Border.all(
-                color:
-                    winner ? color.withValues(alpha: 0.40) : AppColors.border,
+                color: winner ? color.withValues(alpha: 0.45) : color.withValues(alpha: 0.18),
                 width: winner ? 1.5 : 1),
             borderRadius: BorderRadius.circular(14)),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          if (winner)
-            Padding(
+          // Visibility(maintainSize) keeps both cards equal height
+          Visibility(
+            maintainSize: true,
+            maintainAnimation: true,
+            maintainState: true,
+            visible: winner,
+            child: Padding(
                 padding: const EdgeInsets.only(bottom: 5),
                 child: Text('WINNER',
                     style: AppText.ui(8,
                         color: color,
                         letterSpacing: 1.2,
                         weight: FontWeight.w800))),
+          ),
           Text(name,
               style: AppText.ui(13, weight: FontWeight.w700),
               overflow: TextOverflow.ellipsis),
@@ -486,20 +544,67 @@ class _State extends State<GameSessionDetailScreen>
           Text('${(pct * 100).round()}%',
               style: AppText.display(34, color: color)),
           Text('$made/$att', style: AppText.ui(11, color: AppColors.text3)),
-          const SizedBox(height: 10),
-          // Shot dots: green=made / dim=missed — binary legend, acceptable
-          Wrap(
-              spacing: 4,
-              runSpacing: 4,
-              children: log
-                  .map((m) => Container(
-                      width: 9,
-                      height: 9,
-                      decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: m ? AppColors.green : AppColors.surfaceHi)))
-                  .toList()),
+          if (swishes > 0)
+            Text('$swishes swish ✨',
+                style: AppText.ui(11, color: AppColors.green)),
         ]));
+  }
+
+  // Dots matching live session style: swish=filled, make=outline, miss=gray outline
+  Widget _duelDots(List<int> log, Color modeColor) {
+    return Wrap(
+      spacing: 6,
+      runSpacing: 6,
+      children: log.map((v) {
+        final isMiss = v == 0;
+        final isSwish = v == 2;
+        return Container(
+          width: 12,
+          height: 12,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: isSwish ? modeColor : Colors.transparent,
+            border: Border.all(
+              color: isMiss ? AppColors.border : modeColor,
+              width: 1.5,
+            ),
+          ),
+        );
+      }).toList(),
+    );
+  }
+
+  Widget _duelLegendDot(Color color, String label, {required bool filled}) {
+    return Row(mainAxisSize: MainAxisSize.min, children: [
+      Container(
+        width: 10,
+        height: 10,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: filled ? color : Colors.transparent,
+          border: Border.all(color: color, width: 1.5),
+        ),
+      ),
+      const SizedBox(width: 5),
+      Text(label, style: AppText.ui(11, color: AppColors.text2)),
+    ]);
+  }
+
+  Widget _duelCompareRow(String label, String v1, String v2, Color c1, Color c2, bool hi1, bool hi2) {
+    return Row(children: [
+      Expanded(
+          child: Text(v1,
+              textAlign: TextAlign.center,
+              style: AppText.display(22, color: hi1 ? c1 : AppColors.text3))),
+      Expanded(
+          child: Text(label,
+              textAlign: TextAlign.center,
+              style: AppText.ui(11, color: AppColors.text3, weight: FontWeight.w700))),
+      Expanded(
+          child: Text(v2,
+              textAlign: TextAlign.center,
+              style: AppText.display(22, color: hi2 ? c2 : AppColors.text3))),
+    ]);
   }
 
   // ══════════════════════════════════════════════════════════════════════════
@@ -1214,25 +1319,6 @@ class _State extends State<GameSessionDetailScreen>
 
   Widget _vDiv() => Container(width: 1, height: 36, color: AppColors.borderSub);
 
-  Widget _accBar(String label, double pct, Color color) => Row(children: [
-        SizedBox(
-            width: 64,
-            child: Text(label,
-                style: AppText.ui(11, color: AppColors.text2),
-                overflow: TextOverflow.ellipsis)),
-        const SizedBox(width: 10),
-        Expanded(
-            child: ClipRRect(
-                borderRadius: BorderRadius.circular(4),
-                child: LinearProgressIndicator(
-                    value: pct,
-                    backgroundColor: AppColors.borderSub,
-                    valueColor: AlwaysStoppedAnimation(color),
-                    minHeight: 8))),
-        const SizedBox(width: 10),
-        Text('${(pct * 100).round()}%',
-            style: AppText.ui(12, weight: FontWeight.w700, color: color)),
-      ]);
 
   Widget _infoRow(IconData icon, String label, String value) => Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),

@@ -125,8 +125,11 @@ class _AsrServiceImpl {
     try {
       final dir = await getApplicationSupportDirectory();
       keywordsPath = '${dir.path}/kws_keywords.txt';
+      // Keywords must use space-separated BPE tokens from tokens.txt.
+      // ▁MAKE is a single token; others are spelled with per-character tokens.
+      // ▁ prefix = word-start boundary (e.g. ▁S = word-initial S).
       await File(keywordsPath).writeAsString(
-        'MAKE @1.5\nSWISH @1.5\nMISS @1.5\nUNDO @1.5\nDONE @1.5\n',
+        '▁MAKE @1.5\n▁S W I S H @1.5\n▁MI S S @1.5\n▁UN D O @1.5\n▁DON E @1.5\n',
       );
       _status('Keywords OK');
     } catch (e) {
@@ -259,13 +262,13 @@ class AudioRouter {
         androidWillPauseWhenDucked: false,
       ));
     } else if (Platform.isAndroid) {
+      // Use speech config: appropriate for simultaneous mic recording + audio playback
       await _session!.configure(const AudioSessionConfiguration(
         androidAudioAttributes: AndroidAudioAttributes(
-          contentType: AndroidAudioContentType.sonification,
-          usage: AndroidAudioUsage.assistanceSonification,
+          contentType: AndroidAudioContentType.speech,
+          usage: AndroidAudioUsage.voiceCommunication,
         ),
-        androidAudioFocusGainType:
-            AndroidAudioFocusGainType.gainTransientMayDuck,
+        androidAudioFocusGainType: AndroidAudioFocusGainType.gainTransientMayDuck,
         androidWillPauseWhenDucked: false,
       ));
     }
@@ -273,14 +276,17 @@ class AudioRouter {
 
   Future<void> activateForRecording() async {
     if (_session == null) return;
-    await _session!.setActive(true);
+    // iOS requires explicit AVAudioSession activation.
+    // Android AudioRecord does NOT need audio focus — skipping setActive()
+    // prevents AUDIOFOCUS_LOSS conflicts with just_audio's ExoPlayer.
+    if (Platform.isIOS) await _session!.setActive(true);
     if (Platform.isAndroid) await _activateAndroidBluetooth();
   }
 
   Future<void> deactivate() async {
     if (_session == null) return;
     if (Platform.isAndroid) await _deactivateAndroidBluetooth();
-    await _session!.setActive(false);
+    if (Platform.isIOS) await _session!.setActive(false);
   }
 
   static const _btChannel = MethodChannel('com.yourapp/bluetooth_sco');
@@ -296,8 +302,10 @@ class AudioRouter {
       } else {
         await _btChannel.invokeMethod('setSpeakerphoneOn', true);
       }
-    } on PlatformException catch (e) {
-      debugPrint('[AudioRouter] BT error: $e');
+    } catch (e) {
+      // MissingPluginException or PlatformException — BT SCO not available,
+      // continue without it (microphone still works via built-in speaker).
+      debugPrint('[AudioRouter] BT SCO unavailable, skipping: $e');
     }
   }
 
@@ -306,7 +314,7 @@ class AudioRouter {
     try {
       await _btChannel.invokeMethod('stopSco');
       _scoActive = false;
-    } on PlatformException catch (e) {
+    } catch (e) {
       debugPrint('[AudioRouter] stopSco error: $e');
     }
   }
@@ -402,10 +410,11 @@ class _AsrEngine {
         encoder: AudioEncoder.pcm16bits,
         sampleRate: _kSampleRate,
         numChannels: 1,
-        autoGain: true,
-        echoCancel: true,
-        noiseSuppress: true,
-        bitRate: 256000,
+        // autoGain/echoCancel/noiseSuppress require hardware audio processing
+        // that is unavailable on many emulators and some devices — keep off.
+        autoGain: false,
+        echoCancel: false,
+        noiseSuppress: false,
       ),
     );
 
@@ -451,7 +460,13 @@ class _AsrEngine {
       final result = _spotter!.getResult(stream);
       stream.free();
 
-      final keyword = result.keyword.trim().toLowerCase();
+      // Strip BPE word-boundary markers (▁) and inter-token spaces,
+      // then trim and lowercase so switch cases like 'make' always match.
+      final keyword = result.keyword
+          .replaceAll('▁', '')
+          .replaceAll(' ', '')
+          .trim()
+          .toLowerCase();
       if (keyword.isNotEmpty && keyword != '[unk]') {
         debugPrint('[AsrEngine] ✓ "$keyword"');
         onKeyword?.call(keyword);
