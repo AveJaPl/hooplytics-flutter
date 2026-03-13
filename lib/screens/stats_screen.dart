@@ -42,15 +42,13 @@ class _StatsScreenState extends State<StatsScreen>
     ..forward();
 
   late Future<Map<String, dynamic>> _statsFuture;
-  String _activeFilter = 'Today';
+  String _activeFilter = 'All time';
   DateTime? _filterStartDate;
   DateTime? _filterEndDate;
 
   @override
   void initState() {
     super.initState();
-    final now = DateTime.now();
-    _filterStartDate = DateTime(now.year, now.month, now.day);
     _loadStats();
   }
 

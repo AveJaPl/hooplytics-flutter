@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import '../main.dart';
+import '../utils/haptics.dart';
 import '../models/session.dart';
 import '../models/shot.dart';
 import '../services/session_service.dart';
@@ -221,7 +221,7 @@ class _ThreePointContestScreenState extends State<ThreePointContestScreen>
     }
     if (_currentRack >= _totalRacks) return;
 
-    HapticFeedback.mediumImpact();
+    Haptics.mediumImpact();
 
     final isMoney = (_currentRack == _moneyRackIndex) || (_currentBall == 4);
 
@@ -356,7 +356,7 @@ class _ThreePointContestScreenState extends State<ThreePointContestScreen>
             return Expanded(
               child: GestureDetector(
                 onTap: () {
-                  HapticFeedback.selectionClick();
+                  Haptics.heavyImpact();
                   setState(() => _moneyRackIndex = r);
                 },
                 child: Padding(
@@ -421,7 +421,7 @@ class _ThreePointContestScreenState extends State<ThreePointContestScreen>
             border: Colors.transparent,
             glow: true,
             onTap: () {
-              HapticFeedback.lightImpact();
+              Haptics.lightImpact();
               setState(() => _isSetup = false);
             }),
       ),

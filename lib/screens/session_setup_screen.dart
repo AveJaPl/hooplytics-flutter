@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../main.dart';
+import '../utils/haptics.dart';
 import 'session_tracking_screen.dart';
 import '../services/session_service.dart';
 import '../widgets/basketball_court_map.dart';
@@ -122,7 +123,7 @@ class _SessionSetupScreenState extends State<SessionSetupScreen>
 
   void _start() {
     if (_selectedId == null) return;
-    HapticFeedback.mediumImpact();
+    Haptics.mediumImpact();
     Navigator.of(context).push(PageRouteBuilder(
       pageBuilder: (_, __, ___) => SessionTrackingScreen(
         mode: _mode,

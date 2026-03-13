@@ -21,7 +21,6 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart' hide Session;
 
 import '../main.dart';
@@ -29,6 +28,7 @@ import '../models/session.dart';
 import '../models/shot.dart';
 import '../services/background_asr_service.dart';
 import '../services/session_service.dart';
+import '../utils/haptics.dart';
 import '../utils/performance.dart';
 import 'session_setup_screen.dart';
 
@@ -255,7 +255,7 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
   // ═══════════════════════════════════════════════════════════════════════
 
   Future<void> _toggleVoice() async {
-    HapticFeedback.selectionClick();
+    Haptics.selectionClick();
 
     if (!_voiceOn) {
       setState(() {
@@ -297,7 +297,7 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
   // ═══════════════════════════════════════════════════════════════════════
 
   void _applyMake({required bool swish}) {
-    HapticFeedback.mediumImpact();
+    Haptics.mediumImpact();
     setState(() {
       _made++;
       if (swish) _swishes++;
@@ -312,7 +312,7 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
   }
 
   void _applyMiss() {
-    HapticFeedback.lightImpact();
+    Haptics.lightImpact();
     setState(() {
       _attempts++;
       _streak = 0;
@@ -324,7 +324,7 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
 
   void _applyUndo() {
     if (_log.isEmpty) return;
-    HapticFeedback.selectionClick();
+    Haptics.selectionClick();
     setState(() {
       final last = _log.removeLast();
       _attempts--;
@@ -771,7 +771,7 @@ class _SessionTrackingScreenState extends State<SessionTrackingScreen>
   Widget _voiceButton() => GestureDetector(
         onTap: _toggleVoice,
         onLongPress: () {
-          HapticFeedback.mediumImpact();
+          Haptics.heavyImpact();
           setState(() => _showDebug = !_showDebug);
         },
         child: AnimatedContainer(

@@ -227,9 +227,10 @@ class SessionService extends BaseService {
       }
     }
 
-    // ── Trend: last 7 days daily % ──
+    // ── Trend: last 7 days daily % & counts ──
     final now = DateTime.now();
     final weekPct = <double>[];
+    final weekCounts = <int>[];
     final weekLabels = <String>[];
     final dayNames = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
     for (int i = 6; i >= 0; i--) {
@@ -240,18 +241,20 @@ class SessionService extends BaseService {
             d.year == day.year &&
             d.month == day.month &&
             d.day == day.day;
-      });
+      }).toList();
       int dMade = 0, dAtt = 0;
       for (final s in daySessions) {
         dMade += s.made;
         dAtt += s.attempts;
       }
       weekPct.add(dAtt > 0 ? dMade / dAtt : 0.0);
+      weekCounts.add(daySessions.length);
       weekLabels.add(dayNames[day.weekday - 1]);
     }
 
-    // ── Trend: last 6 months monthly % ──
+    // ── Trend: last 6 months monthly % & counts ──
     final monthPct = <double>[];
+    final monthCounts = <int>[];
     final monthLabels = <String>[];
     final monthNames = [
       'Jan',
@@ -272,13 +275,14 @@ class SessionService extends BaseService {
       final mSessions = shootingSessions.where((s) {
         final d = s.createdAt;
         return d != null && d.year == month.year && d.month == month.month;
-      });
+      }).toList();
       int mMade = 0, mAtt = 0;
       for (final s in mSessions) {
         mMade += s.made;
         mAtt += s.attempts;
       }
       monthPct.add(mAtt > 0 ? mMade / mAtt : 0.0);
+      monthCounts.add(mSessions.length);
       monthLabels.add(monthNames[month.month - 1]);
     }
 
@@ -341,22 +345,29 @@ class SessionService extends BaseService {
     }
     final consistencyScore = activeDays / 14.0;
 
-    // ── Week-over-week change ──
+    // ── Weekly Progress (Current ISO week: Monday – Sunday) ──
+    final monday = now.subtract(Duration(days: now.weekday - 1));
+    final startOfMonday = DateTime(monday.year, monday.month, monday.day);
     final thisWeekSessions = shootingSessions.where((s) {
       final d = s.createdAt;
-      return d != null && now.difference(d).inDays < 7;
+      return d != null &&
+          (d.isAfter(startOfMonday) || d.isAtSameMomentAs(startOfMonday));
     });
+
+    int twMade = 0, twAtt = 0;
+    for (final s in thisWeekSessions) {
+      twMade += s.made;
+      twAtt += s.attempts;
+    }
+
+    // ── Week-over-week change (Legacy sliding 7-day window for trend) ──
     final lastWeekSessions = shootingSessions.where((s) {
       final d = s.createdAt;
       return d != null &&
           now.difference(d).inDays >= 7 &&
           now.difference(d).inDays < 14;
     });
-    int twMade = 0, twAtt = 0, lwMade = 0, lwAtt = 0;
-    for (final s in thisWeekSessions) {
-      twMade += s.made;
-      twAtt += s.attempts;
-    }
+    int lwMade = 0, lwAtt = 0;
     for (final s in lastWeekSessions) {
       lwMade += s.made;
       lwAtt += s.attempts;
@@ -385,13 +396,16 @@ class SessionService extends BaseService {
       'consistencyScore': consistencyScore,
       'weekChange': weekChange,
       'weekPct': weekPct,
+      'weekCounts': weekCounts,
       'weekLabels': weekLabels,
       'monthPct': monthPct,
+      'monthCounts': monthCounts,
       'monthLabels': monthLabels,
       'zones': zones,
       'positions': positions,
       'calendarData': calendarData,
       'recentSessions': recentSessions,
+      'weeklyMade': twMade,
     };
   }
 
@@ -426,10 +440,10 @@ class SessionService extends BaseService {
       totalMade += (row['made'] as num).toInt();
       totalAttempts += (row['attempts'] as num).toInt();
     }
-
     return {
       'made': totalMade,
       'attempts': totalAttempts,
     };
   }
+
 }

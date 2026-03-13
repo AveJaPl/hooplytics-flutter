@@ -49,5 +49,9 @@
 	<string>Hooplytics requires speech recognition to log your shots via voice commands.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Hooplytics needs microphone access to listen to your shot tracking commands.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Hooplytics requires access to your photo library to attach screenshots to bug reports.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Hooplytics requires camera access to take photos of bugs to attach to reports.</string>
 </dict>
 </plist>

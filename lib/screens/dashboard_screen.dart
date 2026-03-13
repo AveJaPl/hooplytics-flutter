@@ -1,7 +1,7 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import '../main.dart';
+import '../utils/haptics.dart';
 import '../services/auth_service.dart';
 import 'session_setup_screen.dart';
 import 'stats_screen.dart';
@@ -30,15 +30,29 @@ class _DashboardScreenState extends State<DashboardScreen>
   final _sessionService = SessionService();
   late Future<Map<String, dynamic>> _statsFuture;
 
+  void _reload() => setState(() {
+        _statsFuture = _sessionService.getStatsData();
+        _loadUserGoals();
+      });
+
+  int _weeklyMakesGoal = 200;
+
   @override
   void initState() {
     super.initState();
     _statsFuture = _sessionService.getStatsData();
+    _loadUserGoals();
   }
 
-  void _reload() => setState(() {
-        _statsFuture = _sessionService.getStatsData();
+  void _loadUserGoals() {
+    final user = _authService.currentUser;
+    if (user != null && user.userMetadata != null) {
+      final meta = user.userMetadata!;
+      setState(() {
+        _weeklyMakesGoal = meta['weekly_makes_goal'] as int? ?? 200;
       });
+    }
+  }
 
   @override
   void dispose() {
@@ -122,8 +136,10 @@ class _DashboardScreenState extends State<DashboardScreen>
         final d = snap.data ?? {};
         final streak = d['currentStreak'] as int? ?? 0;
         final weekPct = List<double>.from(d['weekPct'] ?? []);
+        final weekCounts = List<int>.from(d['weekCounts'] ?? []);
         final weekLabels = List<String>.from(d['weekLabels'] ?? []);
         final monthPct = List<double>.from(d['monthPct'] ?? []);
+        final monthCounts = List<int>.from(d['monthCounts'] ?? []);
         final monthLabels = List<String>.from(d['monthLabels'] ?? []);
         final weeklyMade = d['weeklyMade'] as int? ?? 0;
 
@@ -155,6 +171,8 @@ class _DashboardScreenState extends State<DashboardScreen>
                     const SizedBox(height: 28),
 
                     // 2. Weekly goal
+                    _label('WEEKLY GOAL'),
+                    const SizedBox(height: 12),
                     _weeklyGoal(weeklyMade),
                     const SizedBox(height: 28),
 
@@ -162,6 +180,12 @@ class _DashboardScreenState extends State<DashboardScreen>
                     _label('ACCURACY TREND'),
                     const SizedBox(height: 12),
                     _trendChart(weekPct, weekLabels, monthPct, monthLabels),
+                    const SizedBox(height: 28),
+                    
+                    // 3.5 Sessions chart
+                    _label('SESSIONS'),
+                    const SizedBox(height: 12),
+                    _sessionsBarChart(weekCounts, weekLabels, monthCounts, monthLabels),
                     const SizedBox(height: 28),
 
                     // 4. Consistency calendar
@@ -242,7 +266,7 @@ class _DashboardScreenState extends State<DashboardScreen>
             Expanded(
                 child: _LogCard(
               onTap: () {
-                HapticFeedback.mediumImpact();
+                Haptics.heavyImpact();
                 Navigator.push(
                     context,
                     MaterialPageRoute(
@@ -273,7 +297,7 @@ class _DashboardScreenState extends State<DashboardScreen>
             Expanded(
                 child: _LogCard(
               onTap: () {
-                HapticFeedback.lightImpact();
+                Haptics.lightImpact();
                 Navigator.push(
                     context,
                     MaterialPageRoute(
@@ -306,12 +330,11 @@ class _DashboardScreenState extends State<DashboardScreen>
   //  2. WEEKLY GOAL
   // ══════════════════════════════════════════════════════════════════════════
 
-  static const _weeklyTarget = 200;
-
   Widget _weeklyGoal(int made) {
-    final pct = (made / _weeklyTarget).clamp(0.0, 1.0);
-    final left = math.max(0, _weeklyTarget - made);
-    final done = made >= _weeklyTarget;
+    final target = _weeklyMakesGoal;
+    final pct = (made / target).clamp(0.0, 1.0);
+    final left = math.max(0, target - made);
+    final done = made >= target;
     final daysLeft = math.max(0, 7 - DateTime.now().weekday);
 
     final motivation = done
@@ -324,84 +347,74 @@ class _DashboardScreenState extends State<DashboardScreen>
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 24),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        _label('WEEKLY GOAL'),
-        const SizedBox(height: 12),
-        Container(
-          padding: const EdgeInsets.all(20),
-          decoration: BoxDecoration(
-            color: AppColors.surface,
-            border: Border.all(color: AppColors.border),
-            borderRadius: BorderRadius.circular(20),
-          ),
-          child:
-              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Row(children: [
-              Text('MAKES THIS WEEK',
-                  style: AppText.ui(10,
-                      color: AppColors.text3,
-                      letterSpacing: 1.4,
-                      weight: FontWeight.w700)),
-              const Spacer(),
-              if (done)
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: AppColors.green.withValues(alpha: 0.12),
-                    borderRadius: BorderRadius.circular(7),
-                    border: Border.all(
-                        color: AppColors.green.withValues(alpha: 0.28)),
-                  ),
-                  child: Text('DONE ✓',
-                      style: AppText.ui(9,
-                          weight: FontWeight.w800, color: AppColors.green)),
-                )
-              else
-                Text('$daysLeft days left',
-                    style: AppText.ui(11, color: AppColors.text3)),
-            ]),
-            const SizedBox(height: 14),
-            Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
-              Text('$made',
-                  style: AppText.display(48,
-                      color: done ? AppColors.green : AppColors.text1)),
-              Padding(
-                padding: const EdgeInsets.only(bottom: 8, left: 6),
-                child: Text('/ $_weeklyTarget',
-                    style: AppText.ui(18,
-                        color: AppColors.text3, weight: FontWeight.w600)),
-              ),
-              const Spacer(),
-              Text('${(pct * 100).round()}%',
-                  style: AppText.ui(15,
-                      weight: FontWeight.w700,
-                      color: done ? AppColors.green : AppColors.gold)),
-            ]),
-            const SizedBox(height: 12),
-            Row(
-                children: List.generate(10, (i) {
-              final filled = (pct * 10).round();
-              return Expanded(
-                  child: Padding(
-                padding: EdgeInsets.only(right: i < 9 ? 3 : 0),
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 300),
-                  height: 7,
-                  decoration: BoxDecoration(
-                    color: i < filled
-                        ? (done ? AppColors.green : AppColors.gold)
-                        : AppColors.borderSub,
-                    borderRadius: BorderRadius.circular(3),
-                  ),
-                ),
-              ));
-            })),
-            const SizedBox(height: 12),
-            Text(motivation, style: AppText.ui(12, color: AppColors.text2)),
-          ]),
+      child: Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: AppColors.surface,
+          border: Border.all(color: AppColors.border),
+          borderRadius: BorderRadius.circular(20),
         ),
-      ]),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            Text('MAKES THIS WEEK',
+                style: AppText.ui(10,
+                    color: AppColors.text3,
+                    letterSpacing: 1.4,
+                    weight: FontWeight.w700)),
+            const Spacer(),
+            if (done)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+                decoration: BoxDecoration(
+                  color: AppColors.gold.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(7),
+                  border: Border.all(
+                      color: AppColors.gold.withValues(alpha: 0.28)),
+                ),
+                child: Text('DONE ✓',
+                    style: AppText.ui(9,
+                        weight: FontWeight.w800, color: AppColors.gold)),
+              )
+            else
+              Text('$daysLeft days left',
+                  style: AppText.ui(11, color: AppColors.text3)),
+          ]),
+          const SizedBox(height: 14),
+          Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
+            Text('$made',
+                style: AppText.display(48, color: AppColors.text1)),
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8, left: 6),
+              child: Text('/ $target',
+                  style: AppText.ui(18,
+                      color: AppColors.text3, weight: FontWeight.w600)),
+            ),
+            const Spacer(),
+            Text('${(pct * 100).round()}%',
+                style: AppText.ui(15,
+                    weight: FontWeight.w700, color: AppColors.gold)),
+          ]),
+          const SizedBox(height: 12),
+          Row(
+              children: List.generate(10, (i) {
+            final filled = (pct * 10).round();
+            return Expanded(
+                child: Padding(
+              padding: EdgeInsets.only(right: i < 9 ? 3 : 0),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 300),
+                height: 7,
+                decoration: BoxDecoration(
+                  color: i < filled ? AppColors.gold : AppColors.borderSub,
+                  borderRadius: BorderRadius.circular(3),
+                ),
+              ),
+            ));
+          })),
+          const SizedBox(height: 14),
+          Text(motivation, style: AppText.ui(12, color: AppColors.text2)),
+        ]),
+      ),
     );
   }
 
@@ -722,6 +735,71 @@ class _DashboardScreenState extends State<DashboardScreen>
                 letterSpacing: 1.4,
                 weight: FontWeight.w800)),
       );
+
+  Widget _sessionsBarChart(List<int> wCnt, List<String> wLbl, List<int> mCnt, List<String> mLbl) {
+    final data = _chartPeriod == 0 ? wCnt : mCnt;
+    final labels = _chartPeriod == 0 ? wLbl : mLbl;
+    final hasData = data.any((v) => v > 0);
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 24),
+      child: Container(
+        decoration: BoxDecoration(
+          color: AppColors.surface,
+          border: Border.all(color: AppColors.border),
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 16, 16, 0),
+            child: Row(children: [
+              Text('Sessions Count',
+                  style: AppText.ui(14, weight: FontWeight.w600)),
+              const Spacer(),
+              Container(
+                height: 30,
+                padding: const EdgeInsets.all(3),
+                decoration: BoxDecoration(
+                    color: AppColors.bg,
+                    borderRadius: BorderRadius.circular(8)),
+                child: Row(children: [
+                  _PeriodBtn('7D', _chartPeriod == 0,
+                      () => setState(() => _chartPeriod = 0)),
+                  _PeriodBtn('6M', _chartPeriod == 1,
+                      () => setState(() => _chartPeriod = 1)),
+                ]),
+              ),
+            ]),
+          ),
+          if (hasData) ...[
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 6, 20, 0),
+              child: Row(children: [
+                Text(
+                    '${data.reduce(math.max)} sessions peak',
+                    style: AppText.ui(11, color: AppColors.gold)),
+                const Spacer(),
+              ]),
+            ),
+            SizedBox(
+                height: 160,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+                  child: CustomPaint(
+                      painter: _BarChartPainter(data: data, labels: labels),
+                      size: Size.infinite),
+                )),
+          ] else
+            Padding(
+              padding: const EdgeInsets.all(24),
+              child: Center(
+                  child: Text('No data yet',
+                      style: AppText.ui(13, color: AppColors.text3))),
+            ),
+        ]),
+      ),
+    );
+  }
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -806,6 +884,72 @@ class _LogCard extends StatelessWidget {
 // ══════════════════════════════════════════════════════════════════════════════
 //  LINE CHART PAINTER
 // ══════════════════════════════════════════════════════════════════════════════
+
+class _BarChartPainter extends CustomPainter {
+  final List<int> data;
+  final List<String> labels;
+  const _BarChartPainter({required this.data, required this.labels});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (data.isEmpty) return;
+    const padL = 32.0, padR = 16.0, padB = 24.0, padT = 12.0;
+    final cW = size.width - padL - padR;
+    final cH = size.height - padB - padT;
+    final maxV = data.reduce(math.max).toDouble();
+    if (maxV == 0) return;
+
+    double dx(int i) => padL + i * cW / (data.length - 1);
+    
+    final guide = Paint()
+      ..color = AppColors.borderSub
+      ..strokeWidth = 1;
+
+    // Draw horizontal guides
+    for (int g = 0; g <= 4; g++) {
+      final y = padT + g * cH / 4;
+      canvas.drawLine(Offset(padL, y), Offset(size.width, y), guide);
+      final val = (maxV - g * maxV / 4).round();
+      final tp = TextPainter(
+        text: TextSpan(
+            text: '$val',
+            style: const TextStyle(color: AppColors.text3, fontSize: 9)),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      tp.paint(canvas, Offset(0, y - tp.height / 2));
+    }
+
+    final barPaint = Paint()..color = AppColors.gold;
+    final barW = cW / (data.length * 2);
+
+    for (int i = 0; i < data.length; i++) {
+        final val = data[i].toDouble();
+        final h = (val / maxV) * cH;
+        final x = dx(i);
+        final rect = RRect.fromRectAndCorners(
+            Rect.fromLTWH(x - barW / 2, padT + cH - h, barW, h),
+            topLeft: const Radius.circular(4),
+            topRight: const Radius.circular(4),
+        );
+        canvas.drawRRect(rect, barPaint);
+
+        final isLast = i == data.length - 1;
+        final tp = TextPainter(
+            text: TextSpan(
+                text: labels[i],
+                style: TextStyle(
+                    color: isLast ? AppColors.gold : AppColors.text3,
+                    fontSize: 10,
+                    fontWeight: isLast ? FontWeight.w700 : FontWeight.w400)),
+            textDirection: TextDirection.ltr,
+        )..layout();
+        tp.paint(canvas, Offset(x - tp.width / 2, size.height - padB + 4));
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _BarChartPainter old) => old.data != data;
+}
 
 class _LineChartPainter extends CustomPainter {
   final List<double> data;

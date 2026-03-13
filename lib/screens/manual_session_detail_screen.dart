@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import '../main.dart';
+import '../utils/haptics.dart';
 import '../widgets/basketball_court_map.dart';
 import 'session_detail_screen.dart';
 import 'session_setup_screen.dart';
@@ -76,7 +76,7 @@ class _ManualSessionDetailScreenState extends State<ManualSessionDetailScreen>
   }
 
   Future<bool?> _showDeleteConfirm() async {
-    HapticFeedback.vibrate();
+    Haptics.mediumImpact();
     return showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -229,7 +229,7 @@ class _ManualSessionDetailScreenState extends State<ManualSessionDetailScreen>
         child: Row(children: [
           GestureDetector(
             onTap: () {
-              HapticFeedback.lightImpact();
+              Haptics.lightImpact();
               Navigator.pop(context);
             },
             child: Container(

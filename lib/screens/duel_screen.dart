@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../main.dart';
+import '../utils/haptics.dart';
 import '../models/session.dart';
 import '../models/shot.dart';
 import '../services/session_service.dart';
@@ -74,7 +75,7 @@ class _DuelScreenState extends State<DuelScreen> with TickerProviderStateMixin {
 
   void _record(bool made) {
     if (_curAttempts >= _shotsPerPlayer) return;
-    HapticFeedback.mediumImpact();
+    Haptics.mediumImpact();
 
     setState(() {
       if (_phase == _DuelPhase.p1playing) {
@@ -277,7 +278,7 @@ class _DuelScreenState extends State<DuelScreen> with TickerProviderStateMixin {
           padding: const EdgeInsets.fromLTRB(24, 0, 24, 28),
           child: GestureDetector(
             onTap: () {
-              HapticFeedback.mediumImpact();
+              Haptics.mediumImpact();
               setState(() {
                 _phase = _DuelPhase.p1playing;
                 _entry.forward(from: 0);
@@ -537,7 +538,7 @@ class _DuelScreenState extends State<DuelScreen> with TickerProviderStateMixin {
             const SizedBox(height: 28),
             GestureDetector(
               onTap: () {
-                HapticFeedback.mediumImpact();
+                Haptics.mediumImpact();
                 setState(() {
                   _phase = _DuelPhase.p2playing;
                   _entry.forward(from: 0);

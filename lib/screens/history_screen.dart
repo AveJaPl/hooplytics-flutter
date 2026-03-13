@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import '../main.dart';
+import '../utils/haptics.dart';
 import 'session_detail_screen.dart';
 import 'manual_session_detail_screen.dart';
 import 'game_session_detail_screen.dart';
@@ -472,7 +472,7 @@ class _HistoryScreenState extends State<HistoryScreen>
                   icon: Icons.sort_rounded,
                   active: true,
                   onTap: () {
-                    HapticFeedback.lightImpact();
+                    Haptics.heavyImpact();
                     _openFilterMenu('Sort By', ['Newest', 'Oldest'],
                         _sortOption, (v) => setState(() => _sortOption = v));
                   },
@@ -984,7 +984,7 @@ class _HistoryScreenState extends State<HistoryScreen>
   // ── navigation ────────────────────────────────────────────────────────────
 
   void _open(HistoryEntry e) {
-    HapticFeedback.mediumImpact();
+    Haptics.mediumImpact();
     Widget screen;
     if (e.type == SessionType.game && e.gameData != null) {
       screen = GameSessionDetailScreen(entry: e);

@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import '../main.dart';
+import '../utils/haptics.dart';
 import 'history_screen.dart';
 import '../widgets/basketball_court_map.dart';
 import '../services/session_service.dart';
@@ -85,7 +85,7 @@ class _State extends State<GameSessionDetailScreen>
   }
 
   Future<bool?> _showDeleteConfirm() async {
-    HapticFeedback.vibrate();
+    Haptics.mediumImpact();
     return showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -177,7 +177,7 @@ class _State extends State<GameSessionDetailScreen>
         child: Row(children: [
           GestureDetector(
             onTap: () {
-              HapticFeedback.lightImpact();
+              Haptics.lightImpact();
               Navigator.pop(context);
             },
             child: Container(

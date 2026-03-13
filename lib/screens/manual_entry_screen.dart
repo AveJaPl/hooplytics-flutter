@@ -1,17 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../main.dart';
+import '../utils/haptics.dart';
 import '../widgets/basketball_court_map.dart';
 import '../models/session.dart';
 import '../models/shot.dart';
 import '../services/session_service.dart';
 import 'package:supabase_flutter/supabase_flutter.dart' hide Session;
-
-// ═════════════════════════════════════════════════════════════════════════════
-//  MANUAL ENTRY SCREEN
-//  Log a past session: pick location → enter made / attempts → save.
-//  Designed to fit any standard mobile screen with NO scrolling.
-// ═════════════════════════════════════════════════════════════════════════════
 
 class ManualEntryScreen extends StatefulWidget {
   final Session? initialSession;
@@ -22,7 +17,6 @@ class ManualEntryScreen extends StatefulWidget {
 
 class _ManualEntryScreenState extends State<ManualEntryScreen>
     with TickerProviderStateMixin {
-  // ── state ─────────────────────────────────────────────────────────────────
   bool _positionMode = true;
   String _selectedId = 'free_throw';
   int _made = 0;
@@ -80,11 +74,9 @@ class _ManualEntryScreenState extends State<ManualEntryScreen>
     'Right Mid',
   ];
 
-  // ── animations ────────────────────────────────────────────────────────────
   late final AnimationController _fadeIn = AnimationController(
       vsync: this, duration: const Duration(milliseconds: 400))
     ..forward();
-
   late final AnimationController _madeBounce = AnimationController(
       vsync: this, duration: const Duration(milliseconds: 260));
   late final AnimationController _swishBounce = AnimationController(
@@ -102,7 +94,6 @@ class _ManualEntryScreenState extends State<ManualEntryScreen>
         TweenSequenceItem(tween: Tween(begin: 0.95, end: 1.0), weight: 30),
       ]).animate(CurvedAnimation(parent: c, curve: Curves.easeOut));
 
-  // ── computed ──────────────────────────────────────────────────────────────
   int get _totalMade => _made + _swishes;
   int get _attempts => _totalMade + _misses;
 
@@ -114,7 +105,6 @@ class _ManualEntryScreenState extends State<ManualEntryScreen>
     return _zones.firstWhere((z) => z.id == _selectedId).label;
   }
 
-  // ── actions ───────────────────────────────────────────────────────────────
   void _bumpMade(int d) {
     final v = (_made + d).clamp(0, 9999);
     if (v == _made) return;
@@ -141,7 +131,7 @@ class _ManualEntryScreenState extends State<ManualEntryScreen>
 
   void _save() async {
     if (_attempts == 0) {
-      HapticFeedback.heavyImpact();
+      Haptics.heavyImpact();
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         content: Text('Add at least 1 attempt', style: AppText.ui(13)),
         backgroundColor: AppColors.surface,
@@ -151,8 +141,7 @@ class _ManualEntryScreenState extends State<ManualEntryScreen>
       ));
       return;
     }
-    HapticFeedback.heavyImpact();
-
+    Haptics.heavyImpact();
     try {
       final user = Supabase.instance.client.auth.currentUser;
       if (user == null) throw Exception('User not logged in');
@@ -175,7 +164,6 @@ class _ManualEntryScreenState extends State<ManualEntryScreen>
 
       final shots = <Shot>[];
       int idx = 0;
-
       for (int i = 0; i < _swishes; i++) {
         shots.add(Shot(
             sessionId: session.id ?? '',
@@ -206,13 +194,11 @@ class _ManualEntryScreenState extends State<ManualEntryScreen>
       } else {
         await SessionService().saveSessionData(session, shots);
       }
-
       if (mounted) Navigator.of(context).pop(true);
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to save session: $e')),
-        );
+            SnackBar(content: Text('Failed to save session: $e')));
       }
     }
   }
@@ -227,6 +213,7 @@ class _ManualEntryScreenState extends State<ManualEntryScreen>
   }
 
   // ── build ─────────────────────────────────────────────────────────────────
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -234,36 +221,27 @@ class _ManualEntryScreenState extends State<ManualEntryScreen>
       body: FadeTransition(
         opacity: CurvedAnimation(parent: _fadeIn, curve: Curves.easeOut),
         child: SafeArea(
-          child: Column(
-            children: [
-              Expanded(
-                child: SingleChildScrollView(
+          child: Column(children: [
+            Expanded(
+              child: LayoutBuilder(builder: (context, constraints) {
+                final isSmallScreen = constraints.maxHeight < 600;
+                return SingleChildScrollView(
                   physics: const BouncingScrollPhysics(),
-                  padding: const EdgeInsets.only(bottom: 16),
-                  child: Column(
-                    children: [
-                      // ── header ──────────────────────────────────────────────────────
-                      _header(),
-                      const SizedBox(height: 16),
-
-                      // ── mode toggle + selected hint ─────────────────────────────────
-                      _modeRow(),
-                      const SizedBox(height: 16),
-
-                      // ── court (fixed height, always visible) ────────────────────────
-                      _court(),
-                      const SizedBox(height: 20),
-
-                      // ── counters ────────────────────────────────────────────────────
-                      _counters(),
-                    ],
-                  ),
-                ),
-              ),
-              // ── save button ─────────────────────────────────────────────────
-              _saveBar(),
-            ],
-          ),
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Column(mainAxisSize: MainAxisSize.min, children: [
+                    _header(),
+                    SizedBox(height: isSmallScreen ? 6 : 12),
+                    _modeRow(),
+                    SizedBox(height: isSmallScreen ? 6 : 12),
+                    _court(),
+                    SizedBox(height: isSmallScreen ? 8 : 14),
+                    _counters(),
+                  ]),
+                );
+              }),
+            ),
+            _saveBar(),
+          ]),
         ),
       ),
     );
@@ -332,9 +310,7 @@ class _ManualEntryScreenState extends State<ManualEntryScreen>
           selectedId: _selectedId,
           onSpotTap: (id) {
             HapticFeedback.selectionClick();
-            setState(() {
-              _selectedId = id;
-            });
+            setState(() => _selectedId = id);
           },
           spots: _positionMode
               ? _spotIds
@@ -346,54 +322,100 @@ class _ManualEntryScreenState extends State<ManualEntryScreen>
         ),
       );
 
-  // ── counters ──────────────────────────────────────────────────────────────
-  // Three side-by-side counter cards
+  // ══════════════════════════════════════════════════════════════════════════
+  //  COUNTERS  — single card, three stepper rows
+  // ══════════════════════════════════════════════════════════════════════════
 
-  Widget _counters() => Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 20),
-        child: Row(
-          children: [
-            Expanded(
-              child: _ControlPod(
-                label: 'MADE',
-                value: _made,
-                scaleAnim: _madeScale,
-                color: AppColors.green,
-                onInc: () => _bumpMade(1),
-                onDec: () => _bumpMade(-1),
-                onIncLong: () => _bumpMade(5),
-                onDecLong: () => _bumpMade(-5),
-              ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: _ControlPod(
-                label: 'SWISH',
-                value: _swishes,
-                scaleAnim: _swishScale,
-                color: AppColors.gold,
-                onInc: () => _bumpSwishes(1),
-                onDec: () => _bumpSwishes(-1),
-                onIncLong: () => _bumpSwishes(5),
-                onDecLong: () => _bumpSwishes(-5),
-              ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: _ControlPod(
-                label: 'MISSES',
-                value: _misses,
-                scaleAnim: _attScale,
-                color: AppColors.red,
-                onInc: () => _bumpMisses(1),
-                onDec: () => _bumpMisses(-1),
-                onIncLong: () => _bumpMisses(5),
-                onDecLong: () => _bumpMisses(-5),
-              ),
-            ),
-          ],
+  Widget _counters() {
+    final pct = _attempts > 0 ? (_totalMade / _attempts).clamp(0.0, 1.0) : 0.0;
+    final pctColor = _attempts == 0
+        ? AppColors.borderSub
+        : pct >= 0.60
+            ? AppColors.green
+            : pct >= 0.40
+                ? AppColors.gold
+                : AppColors.red;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 20),
+      child: Container(
+        decoration: BoxDecoration(
+          color: AppColors.surface,
+          border: Border.all(color: AppColors.border),
+          borderRadius: BorderRadius.circular(20),
         ),
-      );
+        child: Column(children: [
+          // ── mini summary bar ─────────────────────────────────────────
+          Padding(
+            padding: const EdgeInsets.fromLTRB(18, 14, 18, 0),
+            child: Row(children: [
+              Text(
+                _attempts > 0
+                    ? '$_totalMade / $_attempts makes'
+                    : 'No shots yet',
+                style: AppText.ui(12,
+                    color: AppColors.text2, weight: FontWeight.w600),
+              ),
+              const Spacer(),
+              Text(
+                _attempts > 0 ? '${(pct * 100).round()}%' : '—',
+                style: AppText.ui(12, color: pctColor, weight: FontWeight.w700),
+              ),
+            ]),
+          ),
+          const SizedBox(height: 10),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 18),
+            child: _ShotBar(
+              made: _made,
+              swishes: _swishes,
+              misses: _misses,
+            ),
+          ),
+          const SizedBox(height: 12),
+          Container(height: 1, color: AppColors.borderSub),
+
+          // ── rows ─────────────────────────────────────────────────────
+          _StepperRow(
+            label: 'Made',
+            icon: Icons.check_circle_outline_rounded,
+            color: AppColors.green,
+            value: _made,
+            scaleAnim: _madeScale,
+            onInc: () => _bumpMade(1),
+            onDec: () => _bumpMade(-1),
+            onIncLong: () => _bumpMade(5),
+            onDecLong: () => _bumpMade(-5),
+            isLast: false,
+          ),
+          _StepperRow(
+            label: 'Swish',
+            icon: Icons.star_outline_rounded,
+            color: AppColors.gold,
+            value: _swishes,
+            scaleAnim: _swishScale,
+            onInc: () => _bumpSwishes(1),
+            onDec: () => _bumpSwishes(-1),
+            onIncLong: () => _bumpSwishes(5),
+            onDecLong: () => _bumpSwishes(-5),
+            isLast: false,
+          ),
+          _StepperRow(
+            label: 'Miss',
+            icon: Icons.highlight_off_rounded,
+            color: AppColors.red,
+            value: _misses,
+            scaleAnim: _attScale,
+            onInc: () => _bumpMisses(1),
+            onDec: () => _bumpMisses(-1),
+            onIncLong: () => _bumpMisses(5),
+            onDecLong: () => _bumpMisses(-5),
+            isLast: true,
+          ),
+        ]),
+      ),
+    );
+  }
 
   // ── save bar ──────────────────────────────────────────────────────────────
 
@@ -437,99 +459,151 @@ class _ManualEntryScreenState extends State<ManualEntryScreen>
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-//  COUNTER CARD — Vertical layout for 3-column row
+//  SHOT BAR  — proportional colour split: green=made, gold=swish, red=miss
 // ═════════════════════════════════════════════════════════════════════════════
 
-class _ControlPod extends StatelessWidget {
-  final String label;
-  final int value;
-  final Animation<double> scaleAnim;
-  final Color color;
-  final VoidCallback onInc, onDec, onIncLong, onDecLong;
-
-  const _ControlPod({
-    required this.label,
-    required this.value,
-    required this.scaleAnim,
-    required this.color,
-    required this.onInc,
-    required this.onDec,
-    required this.onIncLong,
-    required this.onDecLong,
-  });
+class _ShotBar extends StatelessWidget {
+  final int made, swishes, misses;
+  const _ShotBar(
+      {required this.made, required this.swishes, required this.misses});
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(22),
-        border: Border.all(color: AppColors.border),
-      ),
-      child: Column(
-        children: [
-          // ── Increment Button (Top) ──────────────────────────────────────────
-          GestureDetector(
-            onTap: onInc,
-            onLongPress: onIncLong,
-            child: Container(
-              height: 70,
-              width: double.infinity,
-              decoration: BoxDecoration(
-                color: color.withValues(alpha: 0.15),
-                borderRadius:
-                    const BorderRadius.vertical(top: Radius.circular(21)),
+    final total = made + swishes + misses;
+    if (total == 0) {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(4),
+        child: Container(height: 6, color: AppColors.borderSub),
+      );
+    }
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(4),
+      child: SizedBox(
+        height: 6,
+        child: Row(children: [
+          if (made > 0)
+            Flexible(
+              flex: made,
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 250),
+                color: AppColors.green,
               ),
-              child: Icon(Icons.add_rounded, color: color, size: 32),
             ),
-          ),
-
-          // ── Value Display (Middle) ──────────────────────────────────────────
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 12),
-            child: Column(
-              children: [
-                Text(label,
-                    style: AppText.ui(8,
-                        color: AppColors.text3,
-                        weight: FontWeight.w800,
-                        letterSpacing: 1.0)),
-                const SizedBox(height: 4),
-                AnimatedBuilder(
-                  animation: scaleAnim,
-                  builder: (_, __) => Transform.scale(
-                    scale: scaleAnim.value,
-                    child: Text(
-                      '$value',
-                      style: AppText.display(36, color: color),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-
-          // ── Decrement Button (Bottom) ───────────────────────────────────────
-          GestureDetector(
-            onTap: onDec,
-            onLongPress: onDecLong,
-            child: Container(
-              height: 50,
-              width: double.infinity,
-              decoration: BoxDecoration(
-                color: AppColors.surfaceHi.withValues(alpha: 0.5),
-                borderRadius:
-                    const BorderRadius.vertical(bottom: Radius.circular(21)),
+          if (swishes > 0)
+            Flexible(
+              flex: swishes,
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 250),
+                color: AppColors.gold,
               ),
-              child: const Icon(Icons.remove_rounded,
-                  color: AppColors.text2, size: 24),
             ),
-          ),
-        ],
+          if (misses > 0)
+            Flexible(
+              flex: misses,
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 250),
+                color: AppColors.red,
+              ),
+            ),
+        ]),
       ),
     );
   }
 }
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  STEPPER ROW  — label left · − value + right · divider between rows
+// ═════════════════════════════════════════════════════════════════════════════
+
+class _StepperRow extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final Color color;
+  final int value;
+  final Animation<double> scaleAnim;
+  final VoidCallback onInc, onDec, onIncLong, onDecLong;
+  final bool isLast;
+
+  const _StepperRow({
+    required this.label,
+    required this.icon,
+    required this.color,
+    required this.value,
+    required this.scaleAnim,
+    required this.onInc,
+    required this.onDec,
+    required this.onIncLong,
+    required this.onDecLong,
+    required this.isLast,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(children: [
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+        child: Row(children: [
+          // icon + label
+          Icon(icon, size: 18, color: color),
+          const SizedBox(width: 9),
+          Text(label,
+              style: AppText.ui(14,
+                  weight: FontWeight.w600, color: AppColors.text1)),
+          const Spacer(),
+          // − button
+          GestureDetector(
+            onTap: onDec,
+            onLongPress: onDecLong,
+            child: Container(
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                color: AppColors.bg,
+                border: Border.all(color: AppColors.border),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: const Icon(Icons.remove_rounded,
+                  size: 18, color: AppColors.text2),
+            ),
+          ),
+          // animated value
+          SizedBox(
+            width: 52,
+            child: AnimatedBuilder(
+              animation: scaleAnim,
+              builder: (_, __) => Transform.scale(
+                scale: scaleAnim.value,
+                child: Text('$value',
+                    textAlign: TextAlign.center,
+                    style: AppText.display(28, color: color)),
+              ),
+            ),
+          ),
+          // + button
+          GestureDetector(
+            onTap: onInc,
+            onLongPress: onIncLong,
+            child: Container(
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                color: color.withValues(alpha: 0.12),
+                border: Border.all(color: color.withValues(alpha: 0.28)),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Icon(Icons.add_rounded, size: 18, color: color),
+            ),
+          ),
+        ]),
+      ),
+      if (!isLast) Container(height: 1, color: AppColors.borderSub),
+    ]);
+  }
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  SMALL WIDGETS  — unchanged
+// ═════════════════════════════════════════════════════════════════════════════
 
 class _IconBtn extends StatelessWidget {
   final IconData icon;

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../main.dart';
+import '../utils/haptics.dart';
 import '../models/session.dart';
 import '../models/shot.dart';
 import '../services/session_service.dart';
@@ -137,7 +138,7 @@ class _SoloChallengeScreenState extends State<SoloChallengeScreen>
 
   void _record(bool made) {
     if (_gameOver) return;
-    HapticFeedback.mediumImpact();
+    Haptics.lightImpact();
 
     if (!_started) {
       _started = true;

@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import '../main.dart';
+import '../utils/haptics.dart';
 import '../models/session.dart';
 import '../services/session_service.dart';
 
@@ -71,7 +71,7 @@ class _HorseScreenState extends State<HorseScreen>
   // ── logic ─────────────────────────────────────────────────────────────────
 
   void _callerShot(bool made) {
-    HapticFeedback.mediumImpact();
+    Haptics.mediumImpact();
     if (made) {
       // Caller made it → move to matching phase
       Future.delayed(const Duration(milliseconds: 300), () {
@@ -98,7 +98,7 @@ class _HorseScreenState extends State<HorseScreen>
   }
 
   void _matcherShot(bool made) {
-    HapticFeedback.mediumImpact();
+    Haptics.mediumImpact();
     if (!made) {
       // Matcher missed → gets a letter
       _letterPop.forward(from: 0);
@@ -246,7 +246,7 @@ class _HorseScreenState extends State<HorseScreen>
           padding: const EdgeInsets.fromLTRB(24, 0, 24, 28),
           child: GestureDetector(
             onTap: () {
-              HapticFeedback.mediumImpact();
+              Haptics.mediumImpact();
               setState(() {
                 _phase = _HorsePhase.calling;
                 _entry.forward(from: 0);
@@ -497,7 +497,7 @@ class _HorseScreenState extends State<HorseScreen>
           padding: const EdgeInsets.fromLTRB(24, 0, 24, 32),
           child: GestureDetector(
               onTap: () {
-                HapticFeedback.mediumImpact();
+                Haptics.mediumImpact();
                 setState(() {
                   _phase = _HorsePhase.calling;
                   _entry.forward(from: 0);
