@@ -6,6 +6,7 @@ import '../models/session.dart';
 import '../models/shot.dart';
 import '../services/session_service.dart';
 import 'package:supabase_flutter/supabase_flutter.dart' hide Session;
+import 'session_tracking_screen.dart';
 
 class ManualEntryScreen extends StatefulWidget {
   final Session? initialSession;
@@ -20,11 +21,18 @@ class _ManualEntryScreenState extends State<ManualEntryScreen>
   String _selectedId = 'free_throw';
   int _made = 0;
   int _swishes = 0;
+  int _airballs = 0;
   int _misses = 0;
+
+  late bool _trackSwishes;
+  late bool _trackAirballs;
 
   @override
   void initState() {
     super.initState();
+    final prefs = SessionTrackingScreen.readTrackingPrefs();
+    _trackSwishes = prefs.$1;
+    _trackAirballs = prefs.$2;
     if (widget.initialSession != null) {
       final s = widget.initialSession!;
       _positionMode = s.mode == 'position';
@@ -32,6 +40,14 @@ class _ManualEntryScreenState extends State<ManualEntryScreen>
       _made = s.made;
       _swishes = s.swishes;
       _misses = s.attempts - s.made;
+      // Read airball count from gameData if available
+      final gd = s.gameData;
+      if (gd != null) {
+        _airballs = gd['airballs'] as int? ?? 0;
+        _misses -= _airballs;
+        _trackSwishes = gd['track_swishes'] as bool? ?? _trackSwishes;
+        _trackAirballs = gd['track_airballs'] as bool? ?? _trackAirballs;
+      }
     }
   }
 
@@ -82,10 +98,13 @@ class _ManualEntryScreenState extends State<ManualEntryScreen>
       vsync: this, duration: const Duration(milliseconds: 260));
   late final AnimationController _attBounce = AnimationController(
       vsync: this, duration: const Duration(milliseconds: 260));
+  late final AnimationController _airballBounce = AnimationController(
+      vsync: this, duration: const Duration(milliseconds: 260));
 
   late final Animation<double> _madeScale = _bounceAnim(_madeBounce);
   late final Animation<double> _swishScale = _bounceAnim(_swishBounce);
   late final Animation<double> _attScale = _bounceAnim(_attBounce);
+  late final Animation<double> _airballScale = _bounceAnim(_airballBounce);
 
   static Animation<double> _bounceAnim(AnimationController c) => TweenSequence([
         TweenSequenceItem(tween: Tween(begin: 1.0, end: 1.20), weight: 35),
@@ -94,7 +113,7 @@ class _ManualEntryScreenState extends State<ManualEntryScreen>
       ]).animate(CurvedAnimation(parent: c, curve: Curves.easeOut));
 
   int get _totalMade => _made + _swishes;
-  int get _attempts => _totalMade + _misses;
+  int get _attempts => _totalMade + _misses + _airballs;
 
   String get _selectedLabel {
     if (_positionMode) {
@@ -128,6 +147,14 @@ class _ManualEntryScreenState extends State<ManualEntryScreen>
     _attBounce.forward(from: 0);
   }
 
+  void _bumpAirballs(int d) {
+    final v = (_airballs + d).clamp(0, 9999);
+    if (v == _airballs) return;
+    Haptics.selectionClick();
+    setState(() => _airballs = v);
+    _airballBounce.forward(from: 0);
+  }
+
   void _save() async {
     if (_attempts == 0) {
       Haptics.heavyImpact();
@@ -159,6 +186,11 @@ class _ManualEntryScreenState extends State<ManualEntryScreen>
         bestStreak: 0,
         elapsedSeconds: 0,
         createdAt: widget.initialSession?.createdAt,
+        gameData: {
+          'track_swishes': _trackSwishes,
+          'track_airballs': _trackAirballs,
+          if (_trackAirballs) 'airballs': _airballs,
+        },
       );
 
       final shots = <Shot>[];
@@ -178,6 +210,15 @@ class _ManualEntryScreenState extends State<ManualEntryScreen>
             orderIdx: idx++,
             isMake: true,
             isSwish: false));
+      }
+      for (int i = 0; i < _airballs; i++) {
+        shots.add(Shot(
+            sessionId: session.id ?? '',
+            userId: user.id,
+            orderIdx: idx++,
+            isMake: false,
+            isSwish: false,
+            isAirball: true));
       }
       for (int i = 0; i < _misses; i++) {
         shots.add(Shot(
@@ -208,6 +249,7 @@ class _ManualEntryScreenState extends State<ManualEntryScreen>
     _madeBounce.dispose();
     _swishBounce.dispose();
     _attBounce.dispose();
+    _airballBounce.dispose();
     super.dispose();
   }
 
@@ -368,6 +410,7 @@ class _ManualEntryScreenState extends State<ManualEntryScreen>
             child: _ShotBar(
               made: _made,
               swishes: _swishes,
+              airballs: _airballs,
               misses: _misses,
             ),
           ),
@@ -375,6 +418,31 @@ class _ManualEntryScreenState extends State<ManualEntryScreen>
           Container(height: 1, color: AppColors.borderSub),
 
           // ── rows ─────────────────────────────────────────────────────
+          if (_trackSwishes)
+            _StepperRow(
+              label: 'Swish',
+              icon: Icons.auto_awesome_rounded,
+              color: AppColors.green,
+              value: _swishes,
+              scaleAnim: _swishScale,
+              onInc: () => _bumpSwishes(1),
+              onDec: () => _bumpSwishes(-1),
+              onIncLong: () => _bumpSwishes(5),
+              onDecLong: () => _bumpSwishes(-5),
+              isLast: false,
+            ),
+          _StepperRow(
+            label: 'Made',
+            icon: Icons.check_circle_outline_rounded,
+            color: AppColors.green,
+            value: _made,
+            scaleAnim: _madeScale,
+            onInc: () => _bumpMade(1),
+            onDec: () => _bumpMade(-1),
+            onIncLong: () => _bumpMade(5),
+            onDecLong: () => _bumpMade(-5),
+            isLast: false,
+          ),
           _StepperRow(
             label: 'Miss',
             icon: Icons.highlight_off_rounded,
@@ -385,32 +453,21 @@ class _ManualEntryScreenState extends State<ManualEntryScreen>
             onDec: () => _bumpMisses(-1),
             onIncLong: () => _bumpMisses(5),
             onDecLong: () => _bumpMisses(-5),
-            isLast: false,
+            isLast: !_trackAirballs,
           ),
-          _StepperRow(
-            label: 'Made',
-            icon: Icons.check_circle_outline_rounded,
-            color: AppColors.gold,
-            value: _made,
-            scaleAnim: _madeScale,
-            onInc: () => _bumpMade(1),
-            onDec: () => _bumpMade(-1),
-            onIncLong: () => _bumpMade(5),
-            onDecLong: () => _bumpMade(-5),
-            isLast: false,
-          ),
-          _StepperRow(
-            label: 'Swish',
-            icon: Icons.star_outline_rounded,
-            color: AppColors.green,
-            value: _swishes,
-            scaleAnim: _swishScale,
-            onInc: () => _bumpSwishes(1),
-            onDec: () => _bumpSwishes(-1),
-            onIncLong: () => _bumpSwishes(5),
-            onDecLong: () => _bumpSwishes(-5),
-            isLast: true,
-          ),
+          if (_trackAirballs)
+            _StepperRow(
+              label: 'Airball',
+              icon: Icons.air_rounded,
+              color: AppColors.red,
+              value: _airballs,
+              scaleAnim: _airballScale,
+              onInc: () => _bumpAirballs(1),
+              onDec: () => _bumpAirballs(-1),
+              onIncLong: () => _bumpAirballs(5),
+              onDecLong: () => _bumpAirballs(-5),
+              isLast: true,
+            ),
         ]),
       ),
     );
@@ -462,13 +519,16 @@ class _ManualEntryScreenState extends State<ManualEntryScreen>
 // ═════════════════════════════════════════════════════════════════════════════
 
 class _ShotBar extends StatelessWidget {
-  final int made, swishes, misses;
+  final int made, swishes, airballs, misses;
   const _ShotBar(
-      {required this.made, required this.swishes, required this.misses});
+      {required this.made,
+      required this.swishes,
+      required this.airballs,
+      required this.misses});
 
   @override
   Widget build(BuildContext context) {
-    final total = made + swishes + misses;
+    final total = made + swishes + airballs + misses;
     if (total == 0) {
       return ClipRRect(
         borderRadius: BorderRadius.circular(4),
@@ -480,12 +540,12 @@ class _ShotBar extends StatelessWidget {
       child: SizedBox(
         height: 6,
         child: Row(children: [
-          if (misses > 0)
+          if (swishes > 0)
             Flexible(
-              flex: misses,
+              flex: swishes,
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 250),
-                color: AppColors.red,
+                color: AppColors.green,
               ),
             ),
           if (made > 0)
@@ -493,15 +553,23 @@ class _ShotBar extends StatelessWidget {
               flex: made,
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 250),
-                color: AppColors.gold,
+                color: AppColors.green.withValues(alpha: 0.5),
               ),
             ),
-          if (swishes > 0)
+          if (misses > 0)
             Flexible(
-              flex: swishes,
+              flex: misses,
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 250),
-                color: AppColors.green,
+                color: AppColors.red.withValues(alpha: 0.5),
+              ),
+            ),
+          if (airballs > 0)
+            Flexible(
+              flex: airballs,
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 250),
+                color: AppColors.red,
               ),
             ),
         ]),
@@ -586,11 +654,10 @@ class _StepperRow extends StatelessWidget {
               width: 36,
               height: 36,
               decoration: BoxDecoration(
-                color: color.withValues(alpha: 0.12),
-                border: Border.all(color: color.withValues(alpha: 0.28)),
+                color: color,
                 borderRadius: BorderRadius.circular(10),
               ),
-              child: Icon(Icons.add_rounded, size: 18, color: color),
+              child: Icon(Icons.add_rounded, size: 18, color: AppColors.bg),
             ),
           ),
         ]),

@@ -22,6 +22,9 @@
         android:name="android.permission.BLUETOOTH_CONNECT"
         android:minSdkVersion="31"/>
 
+    <!-- ── Notifications (Android 13+) ───────────────────────────────────── -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+
     <!-- ── Internet (Supabase) ───────────────────────────────────────────── -->
     <uses-permission android:name="android.permission.INTERNET"/>
 

@@ -29,6 +29,9 @@ class HoopSession {
   final int? swishStreak;
   final int? swishPct;
   final int globalAvgPct;
+  final bool trackSwishes;
+  final bool trackAirballs;
+  final int? airballCount;
 
   const HoopSession({
     required this.id,
@@ -47,6 +50,9 @@ class HoopSession {
     this.swishStreak,
     this.swishPct,
     required this.globalAvgPct,
+    this.trackSwishes = true,
+    this.trackAirballs = false,
+    this.airballCount,
   });
 }
 
@@ -413,21 +419,31 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
   //  Uses widget.session.color for MADE, neutral for rest — no red
   // ══════════════════════════════════════════════════════════════════════════
 
-  Widget _statsRow() => Column(children: [
-        Row(children: [
-          _statCard('MADE', '${widget.session.made}', widget.session.color),
-          const SizedBox(width: 12),
-          _statCard('SWISH', '${widget.session.swishCount ?? widget.session.swishPct}',
-              widget.session.color),
-        ]),
-        const SizedBox(height: 12),
-        Row(children: [
-          _statCard('MISSED', '${widget.session.attempts - widget.session.made}',
-              AppColors.text2),
-          const SizedBox(width: 12),
-          _statCard('TOTAL', '${widget.session.attempts}', AppColors.text1),
-        ]),
-      ]);
+  Widget _statsRow() {
+    final s = widget.session;
+    final cards = <Widget>[];
+    cards.add(_statCard('MADE', '${s.made}', s.color));
+    if (s.trackSwishes) {
+      cards.add(_statCard('SWISH', '${s.swishCount ?? s.swishPct}', s.color));
+    }
+    if (s.trackAirballs && s.airballCount != null) {
+      cards.add(_statCard('AIRBALL', '${s.airballCount}', AppColors.orange));
+    }
+    cards.add(_statCard('MISSED', '${s.attempts - s.made}', AppColors.text2));
+    cards.add(_statCard('TOTAL', '${s.attempts}', AppColors.text1));
+
+    // Layout in rows of 2
+    final rows = <Widget>[];
+    for (int i = 0; i < cards.length; i += 2) {
+      if (i > 0) rows.add(const SizedBox(height: 12));
+      rows.add(Row(children: [
+        cards[i],
+        const SizedBox(width: 12),
+        if (i + 1 < cards.length) cards[i + 1] else const Expanded(child: SizedBox()),
+      ]));
+    }
+    return Column(children: rows);
+  }
 
   Widget _statCard(String label, String value, Color valueColor) => Expanded(
           child: Container(
@@ -456,7 +472,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
     final points = <double>[];
     int runningMade = 0;
     for (int i = 0; i < history.length; i++) {
-      if (history[i] != ShotResult.miss) runningMade++;
+      if (history[i] == ShotResult.make || history[i] == ShotResult.swish) runningMade++;
       points.add(runningMade / (i + 1));
     }
     final avg = history.isEmpty ? 0.0 : runningMade / history.length;
@@ -528,11 +544,15 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
                   height: 12,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
-                    color: r == ShotResult.swish ? modeColor : Colors.transparent,
+                    color: r == ShotResult.swish
+                        ? AppColors.green
+                        : r == ShotResult.airball
+                            ? AppColors.red
+                            : Colors.transparent,
                     border: Border.all(
-                      color: r == ShotResult.miss
-                          ? AppColors.border
-                          : modeColor,
+                      color: (r == ShotResult.make || r == ShotResult.swish)
+                          ? AppColors.green
+                          : AppColors.red,
                       width: 1.5,
                     ),
                   ),
@@ -541,11 +561,17 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
             ),
             const SizedBox(height: 16),
             Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-              _legendDot(modeColor, 'made', isOutline: true),
+              _legendDot(AppColors.green, 'made', isOutline: true),
+              if (widget.session.trackSwishes) ...[
+                const SizedBox(width: 16),
+                _legendDot(AppColors.green, 'swish', isOutline: false),
+              ],
+              if (widget.session.trackAirballs) ...[
+                const SizedBox(width: 16),
+                _legendDot(AppColors.red, 'airball', isOutline: false),
+              ],
               const SizedBox(width: 16),
-              _legendDot(modeColor, 'swish', isOutline: false),
-              const SizedBox(width: 16),
-              _legendDot(AppColors.border, 'missed', isOutline: true),
+              _legendDot(AppColors.red, 'missed', isOutline: true),
             ]),
           ],
         ]),
@@ -653,13 +679,13 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
       final last =
           history.sublist(history.length - math.min(10, history.length));
       closerVal =
-          '${(last.where((s) => s != ShotResult.miss).length / last.length * 100).round()}%';
+          '${(last.where((s) => s == ShotResult.make || s == ShotResult.swish).length / last.length * 100).round()}%';
     }
 
     // Stability
     int maxMiss = 0, cur = 0;
     for (var m in history) {
-      if (m == ShotResult.miss) {
+      if (m == ShotResult.miss || m == ShotResult.airball) {
         cur++;
         if (cur > maxMiss) maxMiss = cur;
       } else {
@@ -672,6 +698,17 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
             ? 'SOLID'
             : 'VOLATILE';
 
+    final insights = <Widget>[
+      _insightCard('MAX STREAK', '${widget.session.maxStreak ?? 0}',
+          Icons.local_fire_department_rounded, widget.session.color),
+      if (widget.session.trackSwishes)
+        _insightCard('SWISH STREAK', '${widget.session.swishStreak ?? 0}',
+            Icons.stars_rounded, widget.session.color),
+      _insightCard('THE CLOSER', closerVal, Icons.bolt_rounded,
+          widget.session.color),
+      _insightCard(
+          'STABILITY', stability, Icons.vibration_rounded, AppColors.text2),
+    ];
 
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       _label('SESSION INSIGHTS'),
@@ -682,16 +719,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
         mainAxisSpacing: 10,
         crossAxisSpacing: 10,
         childAspectRatio: 1.5,
-        children: [
-          _insightCard('MAX STREAK', '${widget.session.maxStreak ?? 0}',
-              Icons.local_fire_department_rounded, widget.session.color),
-          _insightCard('SWISH STREAK', '${widget.session.swishStreak ?? 0}',
-              Icons.stars_rounded, widget.session.color),
-          _insightCard('THE CLOSER', closerVal, Icons.bolt_rounded,
-              widget.session.color),
-          _insightCard(
-              'STABILITY', stability, Icons.vibration_rounded, AppColors.text2),
-        ],
+        children: insights,
       ),
     ]);
   }

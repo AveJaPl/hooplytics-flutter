@@ -6,6 +6,7 @@ import '../models/session.dart';
 import '../models/shot.dart';
 import '../services/session_service.dart';
 import '../widgets/tracking_body.dart';
+import 'session_tracking_screen.dart';
 
 // ═════════════════════════════════════════════════════════════════════════════
 //  DUEL SCREEN  –  2 players, same spot, best % wins
@@ -99,12 +100,12 @@ class _DuelScreenState extends State<DuelScreen>
 
   Future<void> _saveSession(TrackingResult p1r, TrackingResult p2r) async {
     try {
-      // int log: 0=miss, 1=make, 2=swish (backward-compatible with history detail)
+      // int log: 0=miss, 1=make, 2=swish, 3=airball
       final p1log = p1r.log
-          .map((r) => r == ShotResult.swish ? 2 : r == ShotResult.make ? 1 : 0)
+          .map((r) => r == ShotResult.swish ? 2 : r == ShotResult.airball ? 3 : r == ShotResult.make ? 1 : 0)
           .toList();
       final p2log = p2r.log
-          .map((r) => r == ShotResult.swish ? 2 : r == ShotResult.make ? 1 : 0)
+          .map((r) => r == ShotResult.swish ? 2 : r == ShotResult.airball ? 3 : r == ShotResult.make ? 1 : 0)
           .toList();
 
       final p1pct = p1r.attempts > 0 ? p1r.made / p1r.attempts : 0.0;
@@ -120,8 +121,9 @@ class _DuelScreenState extends State<DuelScreen>
           sessionId: '',
           userId: '',
           orderIdx: i,
-          isMake: r != ShotResult.miss,
+          isMake: r == ShotResult.make || r == ShotResult.swish,
           isSwish: r == ShotResult.swish,
+          isAirball: r == ShotResult.airball,
           createdAt: DateTime.now(),
         ));
       }
@@ -131,8 +133,9 @@ class _DuelScreenState extends State<DuelScreen>
           sessionId: '',
           userId: '',
           orderIdx: p1r.log.length + i,
-          isMake: r != ShotResult.miss,
+          isMake: r == ShotResult.make || r == ShotResult.swish,
           isSwish: r == ShotResult.swish,
+          isAirball: r == ShotResult.airball,
           createdAt: DateTime.now(),
         ));
       }
@@ -150,9 +153,11 @@ class _DuelScreenState extends State<DuelScreen>
           'p1Made': p1r.made,
           'p1Attempts': p1r.attempts,
           'p1Swishes': p1r.swishes,
+          'p1Airballs': p1r.airballs,
           'p2Made': p2r.made,
           'p2Attempts': p2r.attempts,
           'p2Swishes': p2r.swishes,
+          'p2Airballs': p2r.airballs,
           'p1Log': p1log,
           'p2Log': p2log,
           'winner': winner,
@@ -184,31 +189,39 @@ class _DuelScreenState extends State<DuelScreen>
                   CurvedAnimation(parent: _setupFade, curve: Curves.easeOut),
               child: _buildSetup(),
             ),
-          _DuelPhase.p1playing => TrackingBody(
-              key: const ValueKey('duel_p1'),
-              title: _p1ctrl.text,
-              subtitle: 'DUEL · ROUND 1',
-              accentColor: AppColors.gold,
-              voiceEnabled: true,
-              swishEnabled: true,
-              autoFinishAt: _shotsPerPlayer,
-              onBack: () => setState(() => _phase = _DuelPhase.setup),
-              onFinished: _onP1Finished,
-            ),
-          _DuelPhase.p2playing => TrackingBody(
-              key: const ValueKey('duel_p2'),
-              title: _p2ctrl.text,
-              subtitle: 'DUEL · ROUND 2',
-              accentColor: AppColors.blue,
-              voiceEnabled: true,
-              swishEnabled: true,
-              autoFinishAt: _shotsPerPlayer,
-              onBack: () => setState(() {
-                    _phase = _DuelPhase.setup;
-                    _p1Result = null;
-                  }),
-              onFinished: _onP2Finished,
-            ),
+          _DuelPhase.p1playing => Builder(builder: (_) {
+              final (sw, ab) = SessionTrackingScreen.readTrackingPrefs();
+              return TrackingBody(
+                key: const ValueKey('duel_p1'),
+                title: _p1ctrl.text,
+                subtitle: 'DUEL · ROUND 1',
+                accentColor: AppColors.gold,
+                voiceEnabled: true,
+                swishEnabled: sw,
+                airballEnabled: ab,
+                autoFinishAt: _shotsPerPlayer,
+                onBack: () => setState(() => _phase = _DuelPhase.setup),
+                onFinished: _onP1Finished,
+              );
+            }),
+          _DuelPhase.p2playing => Builder(builder: (_) {
+              final (sw, ab) = SessionTrackingScreen.readTrackingPrefs();
+              return TrackingBody(
+                key: const ValueKey('duel_p2'),
+                title: _p2ctrl.text,
+                subtitle: 'DUEL · ROUND 2',
+                accentColor: AppColors.blue,
+                voiceEnabled: true,
+                swishEnabled: sw,
+                airballEnabled: ab,
+                autoFinishAt: _shotsPerPlayer,
+                onBack: () => setState(() {
+                      _phase = _DuelPhase.setup;
+                      _p1Result = null;
+                    }),
+                onFinished: _onP2Finished,
+              );
+            }),
         },
       ),
     );
@@ -552,7 +565,7 @@ class _DuelResultSheetState extends State<_DuelResultSheet> {
                   child: _PlayerCard(
                       name: widget.p1Name,
                       result: widget.p1Result,
-                      color: AppColors.gold,
+                      color: AppColors.blue,
                       isWinner: !tie && p1wins)),
               const SizedBox(width: 12),
               Expanded(

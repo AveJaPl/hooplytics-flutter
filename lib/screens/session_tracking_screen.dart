@@ -32,7 +32,16 @@ class SessionTrackingScreen extends StatelessWidget {
     this.targetShots = 25,
   });
 
+  static (bool swish, bool airball) readTrackingPrefs() {
+    final user = Supabase.instance.client.auth.currentUser;
+    final meta = user?.userMetadata;
+    final swish = meta?['track_swishes'] as bool? ?? false;
+    final airball = meta?['track_airballs'] as bool? ?? false;
+    return (swish, airball);
+  }
+
   void _showSummary(BuildContext context, TrackingResult result) {
+    final (swishOn, airballOn) = readTrackingPrefs();
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
@@ -45,8 +54,11 @@ class SessionTrackingScreen extends StatelessWidget {
         targetShots: targetShots,
         made: result.made,
         swishes: result.swishes,
+        airballs: result.airballs,
         attempts: result.attempts,
         bestStreak: result.bestStreak,
+        trackSwishes: swishOn,
+        trackAirballs: airballOn,
         elapsed: result.elapsed,
         log: result.log,
         onSave: () => Navigator.of(context).popUntil((r) => r.isFirst),
@@ -60,6 +72,7 @@ class SessionTrackingScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final (swishOn, airballOn) = readTrackingPrefs();
     return Scaffold(
       backgroundColor: AppColors.bg,
       body: SafeArea(
@@ -67,7 +80,8 @@ class SessionTrackingScreen extends StatelessWidget {
           title: selectionLabel,
           subtitle: mode == SessionMode.position ? 'POSITION' : 'RANGE',
           voiceEnabled: true,
-          swishEnabled: true,
+          swishEnabled: swishOn,
+          airballEnabled: airballOn,
           onBack: () => Navigator.of(context).pop(),
           onFinished: (result) => _showSummary(context, result),
         ),
@@ -84,7 +98,8 @@ class _SummarySheet extends StatefulWidget {
   final String label;
   final SessionMode mode;
   final String selectionId;
-  final int targetShots, made, swishes, attempts, bestStreak;
+  final int targetShots, made, swishes, airballs, attempts, bestStreak;
+  final bool trackSwishes, trackAirballs;
   final Duration elapsed;
   final List<ShotResult> log;
   final VoidCallback onSave, onDiscard;
@@ -96,8 +111,11 @@ class _SummarySheet extends StatefulWidget {
     required this.targetShots,
     required this.made,
     required this.swishes,
+    required this.airballs,
     required this.attempts,
     required this.bestStreak,
+    required this.trackSwishes,
+    required this.trackAirballs,
     required this.elapsed,
     required this.log,
     required this.onSave,
@@ -150,6 +168,11 @@ class _SummarySheetState extends State<_SummarySheet> {
         attempts: widget.attempts,
         bestStreak: widget.bestStreak,
         elapsedSeconds: widget.elapsed.inSeconds,
+        gameData: {
+          'track_swishes': widget.trackSwishes,
+          'track_airballs': widget.trackAirballs,
+          if (widget.trackAirballs) 'airballs': widget.airballs,
+        },
       );
       final shots = widget.log
           .asMap()
@@ -158,8 +181,9 @@ class _SummarySheetState extends State<_SummarySheet> {
                 sessionId: '',
                 userId: user.id,
                 orderIdx: e.key,
-                isMake: e.value != ShotResult.miss,
+                isMake: e.value == ShotResult.make || e.value == ShotResult.swish,
                 isSwish: e.value == ShotResult.swish,
+                isAirball: e.value == ShotResult.airball,
               ))
           .toList();
       await SessionService().saveSessionData(session, shots);
@@ -233,8 +257,11 @@ class _SummarySheetState extends State<_SummarySheet> {
           Container(height: 1, color: AppColors.borderSub),
           const SizedBox(height: 18),
           Row(children: [
-            _SumTile('MADE', '${widget.made}', AppColors.gold),
-            _SumTile('SWISHES', '${widget.swishes}', AppColors.green),
+            _SumTile('MADE', '${widget.made}', AppColors.green),
+            if (widget.trackSwishes)
+              _SumTile('SWISHES', '${widget.swishes}', AppColors.green),
+            if (widget.trackAirballs)
+              _SumTile('AIRBALLS', '${widget.airballs}', AppColors.orange),
             _SumTile('ACCURACY', _pct, _gc),
             _SumTile('STREAK', '${widget.bestStreak}', AppColors.gold),
           ]),
@@ -257,10 +284,16 @@ class _SummarySheetState extends State<_SummarySheet> {
                         decoration: BoxDecoration(
                             shape: BoxShape.circle,
                             color: r == ShotResult.swish
-                                ? AppColors.gold
-                                : r == ShotResult.make
-                                    ? AppColors.green
-                                    : AppColors.red),
+                                ? AppColors.green
+                                : r == ShotResult.airball
+                                    ? AppColors.red
+                                    : Colors.transparent,
+                            border: Border.all(
+                              color: (r == ShotResult.make || r == ShotResult.swish)
+                                  ? AppColors.green
+                                  : AppColors.red,
+                              width: 1.5,
+                            )),
                       ))
                   .toList(),
             ),

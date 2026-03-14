@@ -27,7 +27,7 @@ class _ThreePointContestScreenState extends State<ThreePointContestScreen>
   static const _rackNames = [
     'Left\nCorner',
     'Left\nWing',
-    'Top\nArc',
+    'Top of\nArc',
     'Right\nWing',
     'Right\nCorner'
   ];
@@ -44,6 +44,16 @@ class _ThreePointContestScreenState extends State<ThreePointContestScreen>
   bool _gameStarted = false;
   bool _gameOver = false;
   int _moneyRackIndex = 4; // Default to Right Corner
+  bool _timerEnabled = false;
+  bool _startFromRight = false;
+
+  /// Returns the visual rack index for the n-th rack in play order.
+  int _playOrder(int n) => _startFromRight ? (_totalRacks - 1 - n) : n;
+
+  /// The visual rack index currently being played.
+  int get _activeRackIdx => _currentRack < _totalRacks
+      ? _playOrder(_currentRack)
+      : -1;
 
   int get _score {
     int s = 0;
@@ -184,6 +194,21 @@ class _ThreePointContestScreenState extends State<ThreePointContestScreen>
         }
       }
 
+      // Save per-ball results: 0=pending, 1=made, 2=missed
+      final ballResults = <List<int>>[];
+      for (int r = 0; r < _totalRacks; r++) {
+        ballResults.add(_balls[r].map((b) {
+          switch (b) {
+            case _BallState.made:
+              return 1;
+            case _BallState.missed:
+              return 2;
+            case _BallState.pending:
+              return 0;
+          }
+        }).toList());
+      }
+
       final session = Session(
         userId: '',
         type: 'game',
@@ -196,6 +221,10 @@ class _ThreePointContestScreenState extends State<ThreePointContestScreen>
           'maxScore': _maxScore,
           'made': _made,
           'rackScores': _rackScores,
+          'moneyRackIndex': _moneyRackIndex,
+          'startFromRight': _startFromRight,
+          'rackNames': ['Left Corner', 'Left Wing', 'Top of Arc', 'Right Wing', 'Right Corner'],
+          'balls': ballResults,
         },
         targetShots: _totalRacks * _ballsPerRack,
         made: _made,
@@ -217,16 +246,17 @@ class _ThreePointContestScreenState extends State<ThreePointContestScreen>
     if (_gameOver) return;
     if (!_gameStarted) {
       setState(() => _gameStarted = true);
-      _startTimer();
+      if (_timerEnabled) _startTimer();
     }
     if (_currentRack >= _totalRacks) return;
 
     Haptics.mediumImpact();
 
-    final isMoney = (_currentRack == _moneyRackIndex) || (_currentBall == 4);
+    final ri = _activeRackIdx;
+    final isMoney = (ri == _moneyRackIndex) || (_currentBall == 4);
 
     setState(() {
-      _balls[_currentRack][_currentBall] =
+      _balls[ri][_currentBall] =
           made ? _BallState.made : _BallState.missed;
       _flashText = made ? (isMoney ? '+2 MONEY!' : '+1 MADE') : 'MISS';
       _flashColor =
@@ -270,10 +300,12 @@ class _ThreePointContestScreenState extends State<ThreePointContestScreen>
 
   @override
   Widget build(BuildContext context) {
-    final timerColor = _secondsLeft <= 10
-        ? AppColors.red
-        : (_secondsLeft <= 20 ? AppColors.gold : AppColors.text1);
-    final progress = _secondsLeft / _gameDuration;
+    final timerColor = !_timerEnabled
+        ? AppColors.text3
+        : _secondsLeft <= 10
+            ? AppColors.red
+            : (_secondsLeft <= 20 ? AppColors.gold : AppColors.text1);
+    final progress = _timerEnabled ? _secondsLeft / _gameDuration : 1.0;
 
     return Scaffold(
       backgroundColor: AppColors.bg,
@@ -324,7 +356,62 @@ class _ThreePointContestScreenState extends State<ThreePointContestScreen>
               ])),
         ]),
       ),
-      const Spacer(flex: 2),
+      const Spacer(flex: 1),
+
+      // Starting side toggle
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 20),
+        child: GestureDetector(
+          onTap: () {
+            Haptics.selectionClick();
+            setState(() => _startFromRight = !_startFromRight);
+          },
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+            decoration: BoxDecoration(
+              color: AppColors.surface,
+              border: Border.all(color: AppColors.border),
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Row(children: [
+              Icon(
+                _startFromRight ? Icons.arrow_back_rounded : Icons.arrow_forward_rounded,
+                size: 20,
+                color: AppColors.gold,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Starting Side',
+                          style: AppText.ui(14,
+                              weight: FontWeight.w600,
+                              color: AppColors.text1)),
+                      Text(
+                          _startFromRight
+                              ? 'Right → Left'
+                              : 'Left → Right',
+                          style: AppText.ui(11, color: AppColors.text3)),
+                    ]),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                decoration: BoxDecoration(
+                  color: AppColors.gold.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  _startFromRight ? 'RTL' : 'LTR',
+                  style: AppText.ui(11, weight: FontWeight.w700, color: AppColors.gold),
+                ),
+              ),
+            ]),
+          ),
+        ),
+      ),
+      const SizedBox(height: 16),
+
       Text('Select Your Money Rack',
           style:
               AppText.ui(16, color: AppColors.text1, weight: FontWeight.w600)),
@@ -332,7 +419,7 @@ class _ThreePointContestScreenState extends State<ThreePointContestScreen>
       Text('All 5 balls on this rack will be worth 2 points.',
           style: AppText.ui(13, color: AppColors.text3),
           textAlign: TextAlign.center),
-      const SizedBox(height: 32),
+      const SizedBox(height: 24),
 
       // Rack selection UI
       Padding(
@@ -341,6 +428,7 @@ class _ThreePointContestScreenState extends State<ThreePointContestScreen>
           crossAxisAlignment: CrossAxisAlignment.end,
           children: List.generate(_totalRacks, (r) {
             final isSelected = r == _moneyRackIndex;
+            final name = _rackNames[r];
             return Expanded(
               child: GestureDetector(
                 onTap: () {
@@ -384,8 +472,9 @@ class _ThreePointContestScreenState extends State<ThreePointContestScreen>
                         );
                       }).reversed,
                       const SizedBox(height: 8),
-                      Text('R${r + 1}',
-                          style: AppText.ui(9,
+                      Text(name,
+                          textAlign: TextAlign.center,
+                          style: AppText.ui(8,
                               color:
                                   isSelected ? AppColors.gold : AppColors.text3,
                               weight: FontWeight.w700)),
@@ -397,21 +486,110 @@ class _ThreePointContestScreenState extends State<ThreePointContestScreen>
           }),
         ),
       ),
+      const SizedBox(height: 28),
+      // Timer toggle
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 20),
+        child: GestureDetector(
+          onTap: () {
+            Haptics.selectionClick();
+            setState(() => _timerEnabled = !_timerEnabled);
+          },
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 200),
+            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+            decoration: BoxDecoration(
+              color: _timerEnabled
+                  ? AppColors.gold.withValues(alpha: 0.08)
+                  : AppColors.surface,
+              border: Border.all(
+                  color: _timerEnabled
+                      ? AppColors.gold.withValues(alpha: 0.4)
+                      : AppColors.border),
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Row(children: [
+              Icon(
+                _timerEnabled ? Icons.timer_rounded : Icons.timer_off_rounded,
+                size: 20,
+                color: _timerEnabled ? AppColors.gold : AppColors.text3,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Timer',
+                          style: AppText.ui(14,
+                              weight: FontWeight.w600,
+                              color: AppColors.text1)),
+                      Text(
+                          _timerEnabled
+                              ? '60 seconds — NBA rules'
+                              : 'No time limit — practice mode',
+                          style: AppText.ui(11, color: AppColors.text3)),
+                    ]),
+              ),
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                width: 44,
+                height: 26,
+                padding: const EdgeInsets.all(2),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(13),
+                  color: _timerEnabled ? AppColors.gold : AppColors.border,
+                ),
+                child: AnimatedAlign(
+                  duration: const Duration(milliseconds: 200),
+                  alignment: _timerEnabled
+                      ? Alignment.centerRight
+                      : Alignment.centerLeft,
+                  child: Container(
+                    width: 22,
+                    height: 22,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color:
+                          _timerEnabled ? AppColors.bg : AppColors.text3,
+                    ),
+                  ),
+                ),
+              ),
+            ]),
+          ),
+        ),
+      ),
       const Spacer(flex: 3),
       Padding(
         padding: const EdgeInsets.symmetric(horizontal: 20),
-        child: _BigBtn(
-            label: 'START CONTEST',
-            icon: Icons.play_arrow_rounded,
-            bg: AppColors.gold,
-            fg: AppColors.bg,
-            iconColor: AppColors.bg,
-            border: Colors.transparent,
-            glow: true,
-            onTap: () {
-              Haptics.lightImpact();
-              setState(() => _isSetup = false);
-            }),
+        child: GestureDetector(
+          onTap: () {
+            Haptics.lightImpact();
+            setState(() => _isSetup = false);
+          },
+          child: Container(
+            height: 56,
+            decoration: BoxDecoration(
+              color: AppColors.gold,
+              borderRadius: BorderRadius.circular(16),
+              boxShadow: [
+                BoxShadow(
+                    color: AppColors.gold.withValues(alpha: 0.2),
+                    blurRadius: 12,
+                    offset: const Offset(0, 4)),
+              ],
+            ),
+            child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+              const Icon(Icons.play_arrow_rounded, size: 22, color: AppColors.bg),
+              const SizedBox(width: 8),
+              Text('START CONTEST',
+                  style: AppText.ui(14,
+                      weight: FontWeight.w800,
+                      color: AppColors.bg,
+                      letterSpacing: 1.2)),
+            ]),
+          ),
+        ),
       ),
       const SizedBox(height: 24),
     ]);
@@ -440,38 +618,41 @@ class _ThreePointContestScreenState extends State<ThreePointContestScreen>
                     style: AppText.ui(15, weight: FontWeight.w700)),
               ])),
           // Timer
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-            decoration: BoxDecoration(
-              color: _secondsLeft <= 10
-                  ? AppColors.red.withValues(alpha: 0.12)
-                  : AppColors.surface,
-              border: Border.all(
-                  color: _secondsLeft <= 10
-                      ? AppColors.red.withValues(alpha: 0.5)
-                      : AppColors.border),
-              borderRadius: BorderRadius.circular(10),
+          if (_timerEnabled)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+              decoration: BoxDecoration(
+                color: _secondsLeft <= 10
+                    ? AppColors.red.withValues(alpha: 0.12)
+                    : AppColors.surface,
+                border: Border.all(
+                    color: _secondsLeft <= 10
+                        ? AppColors.red.withValues(alpha: 0.5)
+                        : AppColors.border),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Row(children: [
+                Icon(Icons.timer_rounded, size: 14, color: timerColor),
+                const SizedBox(width: 6),
+                Text('${_secondsLeft}s',
+                    style: AppText.display(20, color: timerColor)),
+              ]),
             ),
-            child: Row(children: [
-              Icon(Icons.timer_rounded, size: 14, color: timerColor),
-              const SizedBox(width: 6),
-              Text('${_secondsLeft}s',
-                  style: AppText.display(20, color: timerColor)),
-            ]),
-          ),
         ]),
-        const SizedBox(height: 10),
-        // Timer bar
-        ClipRRect(
-          borderRadius: BorderRadius.circular(3),
-          child: LinearProgressIndicator(
-            value: progress,
-            backgroundColor: AppColors.borderSub,
-            valueColor: AlwaysStoppedAnimation(
-                _secondsLeft <= 10 ? AppColors.red : AppColors.gold),
-            minHeight: 3,
+        if (_timerEnabled) ...[
+          const SizedBox(height: 10),
+          // Timer bar
+          ClipRRect(
+            borderRadius: BorderRadius.circular(3),
+            child: LinearProgressIndicator(
+              value: progress,
+              backgroundColor: AppColors.borderSub,
+              valueColor: AlwaysStoppedAnimation(
+                  _secondsLeft <= 10 ? AppColors.red : AppColors.gold),
+              minHeight: 3,
+            ),
           ),
-        ),
+        ],
       ]),
     );
   }
@@ -549,7 +730,7 @@ class _ThreePointContestScreenState extends State<ThreePointContestScreen>
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.end,
         children: List.generate(_totalRacks, (r) {
-          final isActive = r == _currentRack && !_gameOver;
+          final isActive = r == _activeRackIdx && !_gameOver;
           return Expanded(
               child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 4),
@@ -577,8 +758,9 @@ class _ThreePointContestScreenState extends State<ThreePointContestScreen>
                       state: state, isMoney: isMoney, isCurrent: isCurrentBall);
                 }).reversed,
                 const SizedBox(height: 8),
-                Text('R${r + 1}',
-                    style: AppText.ui(9,
+                Text(_rackNames[r],
+                    textAlign: TextAlign.center,
+                    style: AppText.ui(8,
                         color: isActive ? AppColors.gold : AppColors.text3,
                         weight: FontWeight.w700)),
               ]),
@@ -598,13 +780,17 @@ class _ThreePointContestScreenState extends State<ThreePointContestScreen>
               AppText.ui(16, weight: FontWeight.w700, color: AppColors.text3));
     }
     if (!_gameStarted) {
-      return Text('Tap MAKE or MISS to start the clock',
+      return Text(
+          _timerEnabled
+              ? 'Tap MAKE or MISS to start the clock'
+              : 'Tap MAKE or MISS to begin',
           style: AppText.ui(13, color: AppColors.text3));
     }
+    final ri = _activeRackIdx;
     final ballNum = _currentBall + 1;
-    final isMoney = (_currentRack == _moneyRackIndex) || (_currentBall == 4);
+    final isMoney = (ri == _moneyRackIndex) || (_currentBall == 4);
     return Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-      Text(_rackNames[_currentRack].replaceAll('\n', ' '),
+      Text(_rackNames[ri].replaceAll('\n', ' '),
           style:
               AppText.ui(14, weight: FontWeight.w700, color: AppColors.gold)),
       Text(' · Ball $ballNum/5', style: AppText.ui(14, color: AppColors.text2)),

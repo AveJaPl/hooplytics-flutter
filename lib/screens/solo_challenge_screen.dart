@@ -16,12 +16,16 @@ class SoloChallengeScreen extends StatefulWidget {
   final String modeId;
   final String title;
   final Color color;
+  final List<String>? selectedPositions;
+  final int? ftTargetOverride; // for pressure_fts difficulty
 
   const SoloChallengeScreen({
     super.key,
     required this.modeId,
     required this.title,
     required this.color,
+    this.selectedPositions,
+    this.ftTargetOverride,
   });
 
   @override
@@ -45,21 +49,23 @@ class _SoloChallengeScreenState extends State<SoloChallengeScreen>
   static const _clockDuration = 60;
   int _secondsLeft = _clockDuration;
   Timer? _timer;
+  bool _clockExpired = false; // true = time's up but last shot allowed
 
   // ── pressure FTs ──────────────────────────────────────────────────────────
-  static const _ftTarget = 10; // consecutive makes needed per level
+  late final int _ftTarget; // consecutive makes needed per level
   int _ftLevel = 1;
   int _ftConsecutive = 0; // current consecutive makes in this level
   static const _ftMaxLevels = 5;
 
   // ── hot spot ──────────────────────────────────────────────────────────────
-  static const _hsSpots = [
+  static const _hsDefaultSpots = [
     'Left Corner',
     'Left Wing',
     'Top of Arc',
     'Right Wing',
     'Right Corner'
   ];
+  late final List<String> _hsSpots;
   static const _hsShotsPerSpot = 10;
   int _hsSpotIndex = 0;
   // [spot][shot] = bool?
@@ -84,6 +90,25 @@ class _SoloChallengeScreenState extends State<SoloChallengeScreen>
   int _mikanRep = 0; // completed reps
   bool _mikanRight = true; // true=right-hand side
 
+  // ── selected position (streak / btc) ─────────────────────────────────────
+  String? _selectedPosition;
+
+  static const _spotIdToLabel = {
+    'left_corner': 'Left Corner',
+    'right_corner': 'Right Corner',
+    'left_wing': 'Left Wing',
+    'right_wing': 'Right Wing',
+    'top_arc': 'Top of Arc',
+    'left_elbow': 'Left Elbow',
+    'right_elbow': 'Right Elbow',
+    'left_block': 'Left Block',
+    'right_block': 'Right Block',
+    'free_throw': 'Free Throw',
+    'high_arc': 'High Arc',
+    'left_mid': 'Left Mid',
+    'right_mid': 'Right Mid',
+  };
+
   // ── flash ─────────────────────────────────────────────────────────────────
   String _flash = '';
   Color _flashColor = AppColors.green;
@@ -105,8 +130,22 @@ class _SoloChallengeScreenState extends State<SoloChallengeScreen>
   @override
   void initState() {
     super.initState();
+    // Pressure FTs difficulty
+    _ftTarget = widget.ftTargetOverride ?? 10;
+    // Hot spot: use selected positions or defaults
+    if (widget.modeId == 'hot_spot' && widget.selectedPositions != null && widget.selectedPositions!.length == 5) {
+      _hsSpots = widget.selectedPositions!
+          .map((id) => _spotIdToLabel[id] ?? id)
+          .toList();
+    } else {
+      _hsSpots = List.from(_hsDefaultSpots);
+    }
     _hsResults = List.generate(
         _hsSpots.length, (_) => List.filled(_hsShotsPerSpot, null));
+    // Streak / BTC: store selected position
+    if (widget.selectedPositions != null && widget.selectedPositions!.isNotEmpty) {
+      _selectedPosition = _spotIdToLabel[widget.selectedPositions!.first] ?? widget.selectedPositions!.first;
+    }
   }
 
   @override
@@ -127,7 +166,8 @@ class _SoloChallengeScreenState extends State<SoloChallengeScreen>
         _secondsLeft--;
         if (_secondsLeft <= 0) {
           _timer?.cancel();
-          _endGame('Time\'s up!');
+          _clockExpired = true;
+          // Don't end immediately — allow one more shot to be recorded
         }
       });
     });
@@ -166,13 +206,23 @@ class _SoloChallengeScreenState extends State<SoloChallengeScreen>
 
     if (made) _bounce.forward(from: 0);
     _flashCtrl.forward(from: 0);
+
+    // End game after recording the last shot when clock has expired
+    if (_clockExpired && widget.modeId == 'beat_the_clock') {
+      _endGame('Time\'s up!');
+    }
   }
 
   // ── mode-specific record logic ────────────────────────────────────────────
 
   void _recordBtc(bool made) {
-    _flash = made ? '+MADE' : 'MISS';
-    _flashColor = made ? AppColors.green : AppColors.red;
+    if (_clockExpired) {
+      _flash = made ? 'BUZZER BEATER!' : 'MISS — GAME OVER';
+      _flashColor = made ? AppColors.gold : AppColors.red;
+    } else {
+      _flash = made ? '+MADE' : 'MISS';
+      _flashColor = made ? AppColors.green : AppColors.red;
+    }
   }
 
   void _recordStreak(bool made) {
@@ -180,10 +230,10 @@ class _SoloChallengeScreenState extends State<SoloChallengeScreen>
       _streak++;
       if (_streak > _bestStreak) _bestStreak = _streak;
       _flash = '🔥 $_streak IN A ROW';
-      _flashColor = AppColors.gold;
+      _flashColor = widget.color;
     } else {
       _flash = 'STREAK BROKEN · Best: $_bestStreak';
-      _flashColor = AppColors.red;
+      _flashColor = AppColors.text3;
       _streak = 0;
     }
   }
@@ -393,12 +443,16 @@ class _SoloChallengeScreenState extends State<SoloChallengeScreen>
           'made': _made,
           'attempts': _attempts,
           'secondsUsed': _clockDuration - _secondsLeft,
+          'track_swishes': false,
+          if (_selectedPosition != null) 'position': _selectedPosition,
         };
       case 'streak_mode':
         return {
           'bestStreak': _bestStreak,
           'totalMade': _made,
           'totalAttempts': _attempts,
+          'track_swishes': false,
+          if (_selectedPosition != null) 'position': _selectedPosition,
         };
       case 'pressure_fts':
         return {
@@ -406,11 +460,15 @@ class _SoloChallengeScreenState extends State<SoloChallengeScreen>
           'totalLevels': _ftMaxLevels,
           'made': _made,
           'attempts': _attempts,
+          'ftTarget': _ftTarget,
+          'difficulty': _ftTarget <= 3 ? 'Easy' : _ftTarget <= 5 ? 'Medium' : 'Hard',
         };
       case 'hot_spot':
         return {
           'made': _made,
           'attempts': _attempts,
+          'spotNames': _hsSpots,
+          'track_swishes': false,
         };
       case 'around_the_world':
         return {
@@ -517,6 +575,9 @@ class _SoloChallengeScreenState extends State<SoloChallengeScreen>
                   letterSpacing: 1.8,
                   weight: FontWeight.w700)),
           Text(widget.title, style: AppText.ui(17, weight: FontWeight.w700)),
+          if (_selectedPosition != null)
+            Text(_selectedPosition!,
+                style: AppText.ui(12, color: widget.color)),
         ])),
         if (widget.modeId == 'beat_the_clock') _clockChip(),
       ]),
@@ -677,6 +738,12 @@ class _SoloChallengeScreenState extends State<SoloChallengeScreen>
                 padding: const EdgeInsets.only(top: 12),
                 child: Text('Tap MAKE or MISS to start the clock',
                     style: AppText.ui(12, color: AppColors.text3))),
+          if (_clockExpired && !_gameOver)
+            Padding(
+                padding: const EdgeInsets.only(top: 12),
+                child: Text('Record your last shot!',
+                    style: AppText.ui(12,
+                        color: AppColors.gold, weight: FontWeight.w600))),
         ]));
   }
 
@@ -694,7 +761,7 @@ class _SoloChallengeScreenState extends State<SoloChallengeScreen>
           Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
             _StatChip('CURRENT', '$_streak', widget.color),
             _Divider(),
-            _StatChip('BEST', '$_bestStreak', AppColors.gold),
+            _StatChip('BEST', '$_bestStreak', widget.color),
             _Divider(),
             _StatChip('TOTAL', '$_attempts', AppColors.text2),
           ]),
@@ -712,7 +779,7 @@ class _SoloChallengeScreenState extends State<SoloChallengeScreen>
                                 shape: BoxShape.circle,
                                 color: m
                                     ? AppColors.green
-                                    : AppColors.red.withValues(alpha: 0.5)))))
+                                    : AppColors.red.withValues(alpha: 0.4)))))
                     .toList()),
           ],
         ]));

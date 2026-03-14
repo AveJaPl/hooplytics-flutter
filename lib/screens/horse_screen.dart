@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart' hide Session;
 import '../main.dart';
 import '../utils/haptics.dart';
 import '../models/session.dart';
@@ -11,6 +12,9 @@ import '../services/session_service.dart';
 //  First to spell H-O-R-S-E loses.
 // ═════════════════════════════════════════════════════════════════════════════
 
+const _kPurple = Color(0xFFAA5EEF);
+const _kPurpleDim = Color(0xFF7B3DBF);
+
 enum _HorsePhase { setup, calling, matching, swapAlert, result }
 
 class HorseScreen extends StatefulWidget {
@@ -20,7 +24,7 @@ class HorseScreen extends StatefulWidget {
 }
 
 class _HorseScreenState extends State<HorseScreen>
-    with TickerProviderStateMixin {
+    with SingleTickerProviderStateMixin {
   static const _word = 'HORSE';
 
   _HorsePhase _phase = _HorsePhase.setup;
@@ -28,30 +32,20 @@ class _HorseScreenState extends State<HorseScreen>
   final _p1ctrl = TextEditingController(text: 'Player 1');
   final _p2ctrl = TextEditingController(text: 'Player 2');
 
-  int _p1letters = 0; // number of letters earned
+  int _p1letters = 0;
   int _p2letters = 0;
-
-  // 0 = P1 is calling this round, 1 = P2 is calling
   int _callerIndex = 0;
+  int _totalRounds = 0;
+  late final Stopwatch _stopwatch = Stopwatch();
 
-  // Called shot description (user types it)
   final _shotCtrl = TextEditingController();
 
-  // What happened this round
-
   late final AnimationController _entry = AnimationController(
-      vsync: this, duration: const Duration(milliseconds: 380))
+      vsync: this, duration: const Duration(milliseconds: 350))
     ..forward();
-  late final AnimationController _letterPop = AnimationController(
-      vsync: this, duration: const Duration(milliseconds: 400));
-  late final Animation<double> _letterScale = TweenSequence([
-    TweenSequenceItem(tween: Tween(begin: 0.0, end: 1.25), weight: 55),
-    TweenSequenceItem(tween: Tween(begin: 1.25, end: 1.0), weight: 45),
-  ]).animate(CurvedAnimation(parent: _letterPop, curve: Curves.elasticOut));
 
   String get _callerName => _callerIndex == 0 ? _p1ctrl.text : _p2ctrl.text;
   String get _matcherName => _callerIndex == 0 ? _p2ctrl.text : _p1ctrl.text;
-
   int get _matcherLetters => _callerIndex == 0 ? _p2letters : _p1letters;
 
   bool get _gameOver => _p1letters >= 5 || _p2letters >= 5;
@@ -59,39 +53,48 @@ class _HorseScreenState extends State<HorseScreen>
   String get _winner => _p1letters >= 5 ? _p2ctrl.text : _p1ctrl.text;
 
   @override
+  void initState() {
+    super.initState();
+    // Pre-fill player 1 with user's display name
+    final user = Supabase.instance.client.auth.currentUser;
+    final name = user?.userMetadata?['display_name'] as String?;
+    if (name != null && name.isNotEmpty) {
+      _p1ctrl.text = name;
+    }
+  }
+
+  @override
   void dispose() {
     _p1ctrl.dispose();
     _p2ctrl.dispose();
     _shotCtrl.dispose();
     _entry.dispose();
-    _letterPop.dispose();
     super.dispose();
   }
 
   // ── logic ─────────────────────────────────────────────────────────────────
 
+  void _switchPhase(_HorsePhase next) {
+    setState(() {
+      _phase = next;
+      _entry.forward(from: 0);
+    });
+  }
+
   void _callerShot(bool made) {
     Haptics.mediumImpact();
     if (made) {
-      // Caller made it → move to matching phase
-      Future.delayed(const Duration(milliseconds: 300), () {
-        if (mounted) {
-          setState(() {
-            _phase = _HorsePhase.matching;
-            _entry.forward(from: 0);
-          });
-        }
+      _totalRounds++;
+      Future.delayed(const Duration(milliseconds: 250), () {
+        if (mounted) _switchPhase(_HorsePhase.matching);
       });
     } else {
       // Caller missed → swap roles, no letter
-      Future.delayed(const Duration(milliseconds: 300), () {
+      Future.delayed(const Duration(milliseconds: 250), () {
         if (mounted) {
-          setState(() {
-            _callerIndex = 1 - _callerIndex;
-            _shotCtrl.clear();
-            _phase = _HorsePhase.swapAlert;
-            _entry.forward(from: 0);
-          });
+          _callerIndex = 1 - _callerIndex;
+          _shotCtrl.clear();
+          _switchPhase(_HorsePhase.swapAlert);
         }
       });
     }
@@ -101,7 +104,6 @@ class _HorseScreenState extends State<HorseScreen>
     Haptics.mediumImpact();
     if (!made) {
       // Matcher missed → gets a letter
-      _letterPop.forward(from: 0);
       setState(() {
         if (_callerIndex == 0) {
           _p2letters++;
@@ -109,38 +111,29 @@ class _HorseScreenState extends State<HorseScreen>
           _p1letters++;
         }
       });
-      Future.delayed(const Duration(milliseconds: 700), () {
+      Future.delayed(const Duration(milliseconds: 500), () {
         if (!mounted) return;
         if (_gameOver) {
-          setState(() {
-            _phase = _HorsePhase.result;
-            // Auto-save removed as per standardization request
-            _entry.forward(from: 0);
-          });
+          _switchPhase(_HorsePhase.result);
         } else {
-          // Same caller goes again (they made, matcher missed)
-          setState(() {
-            _shotCtrl.clear();
-            _phase = _HorsePhase.calling;
-            _entry.forward(from: 0);
-          });
+          // Same caller goes again
+          _shotCtrl.clear();
+          _switchPhase(_HorsePhase.calling);
         }
       });
     } else {
       // Matcher made it → swap caller
-      Future.delayed(const Duration(milliseconds: 200), () {
+      Future.delayed(const Duration(milliseconds: 250), () {
         if (!mounted) return;
-        setState(() {
-          _callerIndex = 1 - _callerIndex;
-          _shotCtrl.clear();
-          _phase = _HorsePhase.swapAlert;
-          _entry.forward(from: 0);
-        });
+        _callerIndex = 1 - _callerIndex;
+        _shotCtrl.clear();
+        _switchPhase(_HorsePhase.swapAlert);
       });
     }
   }
 
   Future<void> _saveSession() async {
+    _stopwatch.stop();
     try {
       final session = Session(
         userId: '',
@@ -156,14 +149,14 @@ class _HorseScreenState extends State<HorseScreen>
           'p2Letters': _p2letters,
           'winner': _winner,
           'loser': _loser,
-          'totalRounds': 0,
+          'totalRounds': _totalRounds,
         },
         targetShots: 0,
         made: 0,
         swishes: 0,
         attempts: 0,
         bestStreak: 0,
-        elapsedSeconds: 0,
+        elapsedSeconds: _elapsedSeconds,
       );
 
       await SessionService().saveSessionData(session, []);
@@ -202,22 +195,7 @@ class _HorseScreenState extends State<HorseScreen>
 
   Widget _buildSetup() {
     return Column(children: [
-      Padding(
-          padding: const EdgeInsets.fromLTRB(20, 18, 20, 0),
-          child: Row(children: [
-            _SmBtn(
-                icon: Icons.close_rounded, onTap: () => Navigator.pop(context)),
-            const SizedBox(width: 14),
-            Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text('H-O-R-S-E',
-                  style: AppText.ui(9,
-                      color: AppColors.text3,
-                      letterSpacing: 1.8,
-                      weight: FontWeight.w700)),
-              Text('Enter player names',
-                  style: AppText.ui(16, weight: FontWeight.w700)),
-            ]),
-          ])),
+      _header('H-O-R-S-E', 'Enter player names'),
       const Spacer(),
       Padding(
           padding: const EdgeInsets.symmetric(horizontal: 24),
@@ -225,50 +203,25 @@ class _HorseScreenState extends State<HorseScreen>
             // Word preview
             Row(
                 mainAxisAlignment: MainAxisAlignment.center,
-                children: _word
-                    .split('')
-                    .map((l) => _HorseLetter(
-                        letter: l, earned: false, color: AppColors.text3))
-                    .toList()),
+                children: _word.split('').map((l) => Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 5),
+                      child: Text(l,
+                          style: AppText.display(32,
+                              color: AppColors.text3.withValues(alpha: 0.20))),
+                    )).toList()),
             const SizedBox(height: 28),
-            _NameField(
-                label: 'PLAYER 1',
-                color: const Color(0xFFAA5EEF),
-                controller: _p1ctrl),
+            _nameField('PLAYER 1', _p1ctrl),
             const SizedBox(height: 14),
-            _NameField(
-                label: 'PLAYER 2',
-                color: const Color(0xFFFF7A5C),
-                controller: _p2ctrl),
+            _nameField('PLAYER 2', _p2ctrl),
           ])),
       const Spacer(),
       Padding(
           padding: const EdgeInsets.fromLTRB(24, 0, 24, 28),
-          child: GestureDetector(
-            onTap: () {
-              Haptics.mediumImpact();
-              setState(() {
-                _phase = _HorsePhase.calling;
-                _entry.forward(from: 0);
-              });
-            },
-            child: Container(
-                height: 54,
-                decoration: BoxDecoration(
-                    color: const Color(0xFFAA5EEF),
-                    borderRadius: BorderRadius.circular(14),
-                    boxShadow: [
-                      BoxShadow(
-                          color:
-                              const Color(0xFFAA5EEF).withValues(alpha: 0.28),
-                          blurRadius: 14,
-                          offset: const Offset(0, 5))
-                    ]),
-                child: Center(
-                    child: Text('Start H-O-R-S-E',
-                        style: AppText.ui(15,
-                            weight: FontWeight.w800, color: Colors.white)))),
-          )),
+          child: _actionButton('Start H-O-R-S-E', () {
+            Haptics.mediumImpact();
+            _stopwatch.start();
+            _switchPhase(_HorsePhase.calling);
+          })),
     ]);
   }
 
@@ -276,31 +229,33 @@ class _HorseScreenState extends State<HorseScreen>
 
   Widget _buildCalling() {
     return Column(children: [
-      _horseHeader(),
+      _gameHeader(),
       const SizedBox(height: 24),
-      Padding(
+      Expanded(
+        child: SingleChildScrollView(
           padding: const EdgeInsets.symmetric(horizontal: 24),
           child: Column(children: [
             // Caller indicator
             Container(
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
-                    color: AppColors.surface,
-                    border: Border.all(color: AppColors.border),
+                    color: _kPurple.withValues(alpha: 0.06),
+                    border: Border.all(color: _kPurple.withValues(alpha: 0.20)),
                     borderRadius: BorderRadius.circular(16)),
                 child: Row(children: [
                   Container(
                       width: 10,
                       height: 10,
                       decoration: const BoxDecoration(
-                          shape: BoxShape.circle, color: Color(0xFFAA5EEF))),
+                          shape: BoxShape.circle, color: _kPurple)),
                   const SizedBox(width: 10),
                   Text('$_callerName is calling',
                       style: AppText.ui(14, weight: FontWeight.w600)),
                   const Spacer(),
-                  Text('Caller', style: AppText.ui(12, color: AppColors.text3)),
+                  Text('Caller',
+                      style: AppText.ui(12, color: _kPurple)),
                 ])),
-            const SizedBox(height: 16),
+            const SizedBox(height: 20),
             // Shot description
             Text('CALL YOUR SHOT',
                 style: AppText.ui(9,
@@ -314,7 +269,7 @@ class _HorseScreenState extends State<HorseScreen>
                 maxLines: 2,
                 minLines: 1,
                 decoration: InputDecoration(
-                  hintText: 'e.g. "Mid-range pull-up from left elbow"',
+                  hintText: 'e.g. "Mid-range from left elbow"',
                   hintStyle: AppText.ui(13, color: AppColors.text3),
                   filled: true,
                   fillColor: AppColors.surface,
@@ -324,41 +279,26 @@ class _HorseScreenState extends State<HorseScreen>
                       borderSide: const BorderSide(color: AppColors.border)),
                   focusedBorder: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(12),
-                      borderSide: const BorderSide(
-                          color: Color(0xFFAA5EEF), width: 1.5)),
+                      borderSide:
+                          const BorderSide(color: _kPurple, width: 1.5)),
                 )),
-            const SizedBox(height: 24),
-            Text('DID $_callerName MAKE THE SHOT?',
+            const SizedBox(height: 28),
+            Text('DID ${_callerName.toUpperCase()} MAKE IT?',
                 style: AppText.ui(9,
                     color: AppColors.text3,
                     letterSpacing: 1.3,
                     weight: FontWeight.w700)),
-            const SizedBox(height: 12),
-          ])),
-      const Spacer(),
+          ]),
+        ),
+      ),
       Padding(
-          padding: const EdgeInsets.fromLTRB(24, 0, 24, 28),
+          padding: const EdgeInsets.fromLTRB(24, 12, 24, 28),
           child: Row(children: [
-            Expanded(
-                child: _BigBtn(
-                    label: 'MISSED',
-                    icon: Icons.close_rounded,
-                    bg: AppColors.surface,
-                    fg: AppColors.text2,
-                    iconColor: AppColors.red,
-                    border: AppColors.border,
-                    onTap: () => _callerShot(false))),
+            Expanded(child: _outlineButton('MISSED', Icons.close_rounded,
+                () => _callerShot(false))),
             const SizedBox(width: 14),
-            Expanded(
-                child: _BigBtn(
-                    label: 'MADE IT',
-                    icon: Icons.check_rounded,
-                    bg: const Color(0xFFAA5EEF),
-                    fg: Colors.white,
-                    iconColor: Colors.white,
-                    border: Colors.transparent,
-                    onTap: () => _callerShot(true),
-                    glow: true)),
+            Expanded(child: _filledButton('MADE IT', Icons.check_rounded,
+                () => _callerShot(true))),
           ])),
     ]);
   }
@@ -371,21 +311,17 @@ class _HorseScreenState extends State<HorseScreen>
         : '"${_shotCtrl.text.trim()}"';
 
     return Column(children: [
-      _horseHeader(),
+      _gameHeader(),
       const Spacer(),
       Padding(
           padding: const EdgeInsets.symmetric(horizontal: 24),
           child: Column(children: [
-            // Matcher challenge
+            // Matcher challenge card
             Container(
                 padding: const EdgeInsets.all(22),
                 decoration: BoxDecoration(
-                    gradient: LinearGradient(colors: [
-                      const Color(0xFFFF7A5C).withValues(alpha: 0.15),
-                      const Color(0xFFFF7A5C).withValues(alpha: 0.04)
-                    ], begin: Alignment.topLeft, end: Alignment.bottomRight),
-                    border: Border.all(
-                        color: const Color(0xFFFF7A5C).withValues(alpha: 0.30)),
+                    color: _kPurple.withValues(alpha: 0.06),
+                    border: Border.all(color: _kPurple.withValues(alpha: 0.25)),
                     borderRadius: BorderRadius.circular(20)),
                 child: Column(children: [
                   Container(
@@ -393,10 +329,9 @@ class _HorseScreenState extends State<HorseScreen>
                       height: 48,
                       decoration: BoxDecoration(
                           shape: BoxShape.circle,
-                          color:
-                              const Color(0xFFFF7A5C).withValues(alpha: 0.15)),
+                          color: _kPurple.withValues(alpha: 0.12)),
                       child: const Icon(Icons.sports_basketball_rounded,
-                          color: Color(0xFFFF7A5C), size: 24)),
+                          color: _kPurple, size: 24)),
                   const SizedBox(height: 14),
                   Text('$_matcherName must match',
                       style: AppText.ui(12, color: AppColors.text2)),
@@ -409,66 +344,24 @@ class _HorseScreenState extends State<HorseScreen>
                       style: AppText.ui(12, color: AppColors.text3)),
                   const SizedBox(height: 14),
                   // Matcher's current letters
-                  Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: List.generate(5, (i) {
-                        final earned = i < _matcherLetters;
-                        return Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 3),
-                            child: Text(_word[i],
-                                style: AppText.display(22,
-                                    color: earned
-                                        ? const Color(0xFFFF7A5C)
-                                        : AppColors.text3
-                                            .withValues(alpha: 0.25))));
-                      })),
+                  _letterRow(_matcherLetters, _kPurple),
                 ])),
             const SizedBox(height: 28),
-            Text('DID $_matcherName MATCH IT?',
+            Text('DID ${_matcherName.toUpperCase()} MATCH IT?',
                 style: AppText.ui(9,
                     color: AppColors.text3,
                     letterSpacing: 1.3,
                     weight: FontWeight.w700)),
-            const SizedBox(height: 12),
           ])),
       const Spacer(),
-      // Letter pop animation
-      AnimatedBuilder(
-          animation: _letterPop,
-          builder: (_, __) {
-            if (_letterPop.value == 0) return const SizedBox.shrink();
-            final earned = _callerIndex == 0 ? _p2letters : _p1letters;
-            if (earned == 0) return const SizedBox.shrink();
-            return Transform.scale(
-                scale: _letterScale.value,
-                child: Text(_word[earned - 1],
-                    style:
-                        AppText.display(48, color: const Color(0xFFFF7A5C))));
-          }),
-      const SizedBox(height: 12),
       Padding(
-          padding: const EdgeInsets.fromLTRB(24, 0, 24, 28),
+          padding: const EdgeInsets.fromLTRB(24, 12, 24, 28),
           child: Row(children: [
-            Expanded(
-                child: _BigBtn(
-                    label: 'MISSED',
-                    icon: Icons.close_rounded,
-                    bg: AppColors.surface,
-                    fg: AppColors.text2,
-                    iconColor: AppColors.red,
-                    border: AppColors.border,
-                    onTap: () => _matcherShot(false))),
+            Expanded(child: _outlineButton('MISSED', Icons.close_rounded,
+                () => _matcherShot(false))),
             const SizedBox(width: 14),
-            Expanded(
-                child: _BigBtn(
-                    label: 'MATCHED',
-                    icon: Icons.check_rounded,
-                    bg: AppColors.green,
-                    fg: Colors.black,
-                    iconColor: Colors.black,
-                    border: Colors.transparent,
-                    onTap: () => _matcherShot(true),
-                    glow: true)),
+            Expanded(child: _filledButton('MATCHED', Icons.check_rounded,
+                () => _matcherShot(true))),
           ])),
     ]);
   }
@@ -481,60 +374,84 @@ class _HorseScreenState extends State<HorseScreen>
       Padding(
           padding: const EdgeInsets.symmetric(horizontal: 32),
           child: Column(children: [
-            const Icon(Icons.swap_horiz_rounded,
-                size: 56, color: AppColors.text3),
+            Container(
+              width: 64,
+              height: 64,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: _kPurple.withValues(alpha: 0.10),
+              ),
+              child: const Icon(Icons.swap_horiz_rounded,
+                  size: 32, color: _kPurple),
+            ),
             const SizedBox(height: 18),
-            Text('Switch!', style: AppText.display(36, color: AppColors.text1)),
+            Text('Switch!',
+                style: AppText.display(36, color: AppColors.text1)),
             const SizedBox(height: 10),
             Text('$_callerName is now the caller',
                 style: AppText.ui(16, color: AppColors.text2),
                 textAlign: TextAlign.center),
             const SizedBox(height: 32),
-            _horseScore(),
+            _scoreBoard(),
           ])),
       const Spacer(),
       Padding(
           padding: const EdgeInsets.fromLTRB(24, 0, 24, 32),
-          child: GestureDetector(
-              onTap: () {
-                Haptics.mediumImpact();
-                setState(() {
-                  _phase = _HorsePhase.calling;
-                  _entry.forward(from: 0);
-                });
-              },
-              child: Container(
-                  height: 54,
-                  decoration: BoxDecoration(
-                      color: AppColors.surface,
-                      border: Border.all(color: AppColors.border),
-                      borderRadius: BorderRadius.circular(14)),
-                  child: Center(
-                      child: Text('Continue →',
-                          style: AppText.ui(15,
-                              weight: FontWeight.w700,
-                              color: AppColors.text1)))))),
+          child: _actionButton('Continue', () {
+            Haptics.mediumImpact();
+            _switchPhase(_HorsePhase.calling);
+          })),
     ]);
   }
 
   // ── RESULT ────────────────────────────────────────────────────────────────
 
   Widget _buildResult() {
+    final winnerIsP1 = _p1letters < _p2letters;
+
     return SingleChildScrollView(
         physics: const BouncingScrollPhysics(),
         padding: const EdgeInsets.fromLTRB(24, 28, 24, 40),
         child: Column(children: [
-          const Text('🎯', style: TextStyle(fontSize: 52)),
-          const SizedBox(height: 12),
+          // Trophy
+          Container(
+            width: 80,
+            height: 80,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: _kPurple.withValues(alpha: 0.10),
+            ),
+            child:
+                const Icon(Icons.emoji_events_rounded, size: 40, color: _kPurple),
+          ),
+          const SizedBox(height: 16),
           Text(_winner,
-              style: AppText.ui(28,
-                  weight: FontWeight.w800, color: const Color(0xFFAA5EEF))),
+              style: AppText.ui(28, weight: FontWeight.w800, color: _kPurple)),
           Text('wins!', style: AppText.ui(18, color: AppColors.text2)),
-          const SizedBox(height: 8),
+          const SizedBox(height: 6),
           Text('$_loser spells H-O-R-S-E',
               style: AppText.ui(14, color: AppColors.text3)),
+          const SizedBox(height: 6),
+          Text('$_totalRounds rounds played',
+              style: AppText.ui(12, color: AppColors.text3)),
           const SizedBox(height: 28),
-          _horseScore(large: true),
+
+          // Score cards
+          Row(children: [
+            Expanded(
+                child: _resultCard(
+              _p1ctrl.text,
+              _p1letters,
+              isWinner: winnerIsP1,
+            )),
+            const SizedBox(width: 12),
+            Expanded(
+                child: _resultCard(
+              _p2ctrl.text,
+              _p2letters,
+              isWinner: !winnerIsP1,
+            )),
+          ]),
           const SizedBox(height: 28),
           Row(children: [
             Expanded(
@@ -563,7 +480,7 @@ class _HorseScreenState extends State<HorseScreen>
                     child: Container(
                         height: 52,
                         decoration: BoxDecoration(
-                            color: const Color(0xFFAA5EEF),
+                            color: _kPurple,
                             borderRadius: BorderRadius.circular(14)),
                         child: Center(
                             child: Text('Save',
@@ -574,122 +491,39 @@ class _HorseScreenState extends State<HorseScreen>
         ]));
   }
 
-  // ── shared header ─────────────────────────────────────────────────────────
+  // ═══════════════════════════════════════════════════════════════════════════
+  //  SHARED WIDGETS
+  // ═══════════════════════════════════════════════════════════════════════════
 
-  Widget _horseHeader() {
+  Widget _header(String title, String subtitle) {
     return Padding(
         padding: const EdgeInsets.fromLTRB(20, 18, 20, 0),
         child: Row(children: [
-          _SmBtn(
-              icon: Icons.close_rounded, onTap: () => Navigator.pop(context)),
+          _closeBtn(),
           const SizedBox(width: 14),
-          Expanded(child: _horseScore()),
+          Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(title,
+                style: AppText.ui(9,
+                    color: AppColors.text3,
+                    letterSpacing: 1.8,
+                    weight: FontWeight.w700)),
+            Text(subtitle, style: AppText.ui(16, weight: FontWeight.w700)),
+          ]),
         ]));
   }
 
-  Widget _horseScore({bool large = false}) {
-    final size = large ? 30.0 : 22.0;
-    return Row(
-        mainAxisAlignment:
-            large ? MainAxisAlignment.center : MainAxisAlignment.start,
-        children: [
-          Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            if (!large)
-              Text(_p1ctrl.text,
-                  style: AppText.ui(10, color: AppColors.text3),
-                  overflow: TextOverflow.ellipsis),
-            Row(
-                children: List.generate(
-                    5,
-                    (i) => Padding(
-                        padding: const EdgeInsets.only(right: 2),
-                        child: Text(_word[i],
-                            style: AppText.display(size,
-                                color: i < _p1letters
-                                    ? const Color(0xFFAA5EEF)
-                                    : AppColors.text3
-                                        .withValues(alpha: 0.22)))))),
-          ]),
-          Padding(
-              padding: EdgeInsets.symmetric(horizontal: large ? 20 : 12),
-              child: Text('vs', style: AppText.ui(12, color: AppColors.text3))),
-          Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-            if (!large)
-              Text(_p2ctrl.text,
-                  style: AppText.ui(10, color: AppColors.text3),
-                  overflow: TextOverflow.ellipsis),
-            Row(
-                children: List.generate(
-                    5,
-                    (i) => Padding(
-                        padding: const EdgeInsets.only(right: 2),
-                        child: Text(_word[i],
-                            style: AppText.display(size,
-                                color: i < _p2letters
-                                    ? const Color(0xFFFF7A5C)
-                                    : AppColors.text3
-                                        .withValues(alpha: 0.22)))))),
-          ]),
-        ]);
+  Widget _gameHeader() {
+    return Padding(
+        padding: const EdgeInsets.fromLTRB(20, 18, 20, 0),
+        child: Row(children: [
+          _closeBtn(),
+          const SizedBox(width: 14),
+          Expanded(child: _scoreBoard()),
+        ]));
   }
-}
 
-// ── Sub-widgets ───────────────────────────────────────────────────────────────
-
-class _HorseLetter extends StatelessWidget {
-  final String letter;
-  final bool earned;
-  final Color color;
-  const _HorseLetter(
-      {required this.letter, required this.earned, required this.color});
-  @override
-  Widget build(BuildContext context) => Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 4),
-      child: Text(letter,
-          style: AppText.display(32,
-              color:
-                  earned ? color : AppColors.text3.withValues(alpha: 0.20))));
-}
-
-class _NameField extends StatelessWidget {
-  final String label;
-  final Color color;
-  final TextEditingController controller;
-  const _NameField(
-      {required this.label, required this.color, required this.controller});
-  @override
-  Widget build(BuildContext context) =>
-      Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text(label,
-            style: AppText.ui(9,
-                color: AppColors.text3,
-                letterSpacing: 1.6,
-                weight: FontWeight.w700)),
-        const SizedBox(height: 8),
-        TextField(
-            controller: controller,
-            style: AppText.ui(16, weight: FontWeight.w600),
-            decoration: InputDecoration(
-                filled: true,
-                fillColor: AppColors.surface,
-                contentPadding:
-                    const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
-                enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: const BorderSide(color: AppColors.border)),
-                focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: BorderSide(color: color, width: 1.5)))),
-      ]);
-}
-
-class _SmBtn extends StatelessWidget {
-  final IconData icon;
-  final VoidCallback onTap;
-  const _SmBtn({required this.icon, required this.onTap});
-  @override
-  Widget build(BuildContext context) => GestureDetector(
-      onTap: onTap,
+  Widget _closeBtn() => GestureDetector(
+      onTap: () => Navigator.pop(context),
       child: Container(
           width: 38,
           height: 38,
@@ -697,74 +531,171 @@ class _SmBtn extends StatelessWidget {
               color: AppColors.surface,
               border: Border.all(color: AppColors.border),
               borderRadius: BorderRadius.circular(10)),
-          child: Icon(icon, size: 16, color: AppColors.text2)));
-}
+          child:
+              const Icon(Icons.close_rounded, size: 16, color: AppColors.text2)));
 
-class _BigBtn extends StatefulWidget {
-  final String label;
-  final IconData icon;
-  final Color bg, fg, iconColor, border;
-  final bool glow;
-  final VoidCallback onTap;
-  const _BigBtn(
-      {required this.label,
-      required this.icon,
-      required this.bg,
-      required this.fg,
-      required this.iconColor,
-      required this.border,
-      required this.onTap,
-      this.glow = false});
-  @override
-  State<_BigBtn> createState() => _BigBtnState();
-}
-
-class _BigBtnState extends State<_BigBtn> with SingleTickerProviderStateMixin {
-  late final AnimationController _c = AnimationController(
-      vsync: this, duration: const Duration(milliseconds: 100));
-  late final Animation<double> _s = Tween(begin: 1.0, end: 0.92)
-      .animate(CurvedAnimation(parent: _c, curve: Curves.easeOut));
-  @override
-  void dispose() {
-    _c.dispose();
-    super.dispose();
+  Widget _scoreBoard() {
+    return Row(mainAxisAlignment: MainAxisAlignment.start, children: [
+      Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(_p1ctrl.text,
+            style: AppText.ui(10, color: AppColors.text3),
+            overflow: TextOverflow.ellipsis),
+        _letterRow(_p1letters, _kPurple, size: 20.0),
+      ]),
+      Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10),
+          child: Text('vs', style: AppText.ui(12, color: AppColors.text3))),
+      Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(_p2ctrl.text,
+            style: AppText.ui(10, color: AppColors.text3),
+            overflow: TextOverflow.ellipsis),
+        _letterRow(_p2letters, _kPurpleDim, size: 20.0),
+      ]),
+    ]);
   }
 
-  @override
-  Widget build(BuildContext context) => GestureDetector(
-      onTapDown: (_) => _c.forward(),
-      onTapUp: (_) {
-        _c.reverse();
-        widget.onTap();
-      },
-      onTapCancel: () => _c.reverse(),
-      child: AnimatedBuilder(
-          animation: _s,
-          builder: (_, __) => Transform.scale(
-              scale: _s.value,
-              child: Container(
-                  height: 82,
-                  decoration: BoxDecoration(
-                      color: widget.bg,
-                      borderRadius: BorderRadius.circular(22),
-                      border: Border.all(color: widget.border, width: 1.5),
-                      boxShadow: widget.glow
-                          ? [
-                              BoxShadow(
-                                  color: widget.bg.withValues(alpha: 0.28),
-                                  blurRadius: 14,
-                                  offset: const Offset(0, 5))
-                            ]
-                          : null),
-                  child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(widget.icon, color: widget.iconColor, size: 28),
-                        const SizedBox(height: 5),
-                        Text(widget.label,
-                            style: AppText.ui(15,
-                                weight: FontWeight.w800,
-                                color: widget.fg,
-                                letterSpacing: 1.4))
-                      ])))));
+  Widget _letterRow(int earned, Color color, {double size = 22.0}) {
+    return Row(
+        mainAxisSize: MainAxisSize.min,
+        children: List.generate(
+            5,
+            (i) => Padding(
+                padding: const EdgeInsets.only(right: 3),
+                child: Text(_word[i],
+                    style: AppText.display(size,
+                        color: i < earned
+                            ? color
+                            : AppColors.text3.withValues(alpha: 0.20))))));
+  }
+
+  Widget _nameField(String label, TextEditingController ctrl) {
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text(label,
+          style: AppText.ui(9,
+              color: AppColors.text3,
+              letterSpacing: 1.6,
+              weight: FontWeight.w700)),
+      const SizedBox(height: 8),
+      TextField(
+          controller: ctrl,
+          style: AppText.ui(16, weight: FontWeight.w600),
+          decoration: InputDecoration(
+            filled: true,
+            fillColor: AppColors.surface,
+            contentPadding:
+                const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
+            enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: const BorderSide(color: AppColors.border)),
+            focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: const BorderSide(color: _kPurple, width: 1.5)),
+          )),
+    ]);
+  }
+
+  int get _elapsedSeconds => _stopwatch.elapsed.inSeconds;
+
+  Widget _actionButton(String label, VoidCallback onTap) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+          height: 54,
+          decoration: BoxDecoration(
+              color: _kPurple,
+              borderRadius: BorderRadius.circular(14),
+              boxShadow: [
+                BoxShadow(
+                    color: _kPurple.withValues(alpha: 0.28),
+                    blurRadius: 14,
+                    offset: const Offset(0, 5))
+              ]),
+          child: Center(
+              child: Text(label,
+                  style: AppText.ui(15,
+                      weight: FontWeight.w800, color: Colors.white)))),
+    );
+  }
+
+  Widget _filledButton(String label, IconData icon, VoidCallback onTap) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+          height: 72,
+          decoration: BoxDecoration(
+              color: _kPurple,
+              borderRadius: BorderRadius.circular(18),
+              boxShadow: [
+                BoxShadow(
+                    color: _kPurple.withValues(alpha: 0.25),
+                    blurRadius: 12,
+                    offset: const Offset(0, 4))
+              ]),
+          child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+            Icon(icon, color: Colors.white, size: 24),
+            const SizedBox(height: 4),
+            Text(label,
+                style: AppText.ui(12,
+                    weight: FontWeight.w800,
+                    color: Colors.white,
+                    letterSpacing: 1.2)),
+          ])),
+    );
+  }
+
+  Widget _outlineButton(String label, IconData icon, VoidCallback onTap) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+          height: 72,
+          decoration: BoxDecoration(
+              color: AppColors.surface,
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(color: AppColors.border)),
+          child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+            Icon(icon, color: AppColors.text2, size: 24),
+            const SizedBox(height: 4),
+            Text(label,
+                style: AppText.ui(12,
+                    weight: FontWeight.w800,
+                    color: AppColors.text2,
+                    letterSpacing: 1.2)),
+          ])),
+    );
+  }
+
+  Widget _resultCard(String name, int letters, {required bool isWinner}) {
+    return Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+            color: isWinner
+                ? _kPurple.withValues(alpha: 0.06)
+                : AppColors.surface,
+            border: Border.all(
+                color: isWinner
+                    ? _kPurple.withValues(alpha: 0.30)
+                    : AppColors.border),
+            borderRadius: BorderRadius.circular(16)),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          if (isWinner)
+            Padding(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: Text('WINNER',
+                    style: AppText.ui(9,
+                        color: _kPurple,
+                        letterSpacing: 1.3,
+                        weight: FontWeight.w700))),
+          Text(name,
+              style: AppText.ui(14, weight: FontWeight.w700),
+              overflow: TextOverflow.ellipsis),
+          const SizedBox(height: 10),
+          _letterRow(letters, _kPurple, size: 24.0),
+          const SizedBox(height: 6),
+          Text(
+              letters == 0
+                  ? 'Clean!'
+                  : '$letters ${letters == 1 ? "letter" : "letters"}',
+              style: AppText.ui(12, color: AppColors.text3)),
+        ]));
+  }
 }

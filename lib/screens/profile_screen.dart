@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import '../main.dart';
 import '../services/auth_service.dart';
+import '../services/notification_service.dart';
 import '../utils/haptics.dart';
 
 typedef HapticFeedbackFunction = Future<void> Function();
@@ -16,6 +17,7 @@ class ProfileScreen extends StatefulWidget {
 
 class _ProfileScreenState extends State<ProfileScreen> {
   final _authService = AuthService();
+  final _notifService = NotificationService();
 
   bool _isPro = false;
   String? _selectedAvatar;
@@ -23,10 +25,17 @@ class _ProfileScreenState extends State<ProfileScreen> {
   bool _notifyWeeklySummary = true;
   bool _notifyGoalReminders = true;
   bool _notifyNewFeatures = false;
+  int _unreadCount = 0;
   XFile? _bugPhoto;
 
 
+  // Tracking
+  bool _trackSwishes = false;
+  bool _trackAirballs = false;
 
+  // Home widgets
+  bool _showWeeklyGoal = true;
+  bool _showQuoteOfDay = true;
 
   // Goals
   int _weeklyMakesGoal = 200;
@@ -37,8 +46,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
   void initState() {
     super.initState();
     _loadUserGoals();
+    _loadNotificationState();
   }
-
 
   void _loadUserGoals() {
     final user = _authService.currentUser;
@@ -49,8 +58,26 @@ class _ProfileScreenState extends State<ProfileScreen> {
             (meta['weekly_makes_goal'] as int? ?? 200).clamp(100, 5000);
         _weeklySessionGoal = meta['weekly_sessions_goal'] as int? ?? 5;
         _streakReminder = meta['streak_reminder'] as bool? ?? true;
+        _trackSwishes = meta['track_swishes'] as bool? ?? false;
+        _trackAirballs = meta['track_airballs'] as bool? ?? false;
+        _showWeeklyGoal = meta['show_weekly_goal'] as bool? ?? true;
+        _showQuoteOfDay = meta['show_quote_of_day'] as bool? ?? true;
+        _notificationsEnabled =
+            meta['notifications_enabled'] as bool? ?? true;
+        _notifyWeeklySummary =
+            meta['notify_weekly_summary'] as bool? ?? true;
+        _notifyGoalReminders =
+            meta['notify_goal_reminders'] as bool? ?? true;
+        _notifyNewFeatures =
+            meta['notify_new_features'] as bool? ?? false;
       });
     }
+  }
+
+  Future<void> _loadNotificationState() async {
+    await _notifService.requestPermissions();
+    final count = await _notifService.unreadCount();
+    if (mounted) setState(() => _unreadCount = count);
   }
 
   String get _userName {
@@ -263,6 +290,22 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
+  Future<void> _saveNotificationPrefs() async {
+    try {
+      await _authService.updateUserMetadata({
+        'notifications_enabled': _notificationsEnabled,
+        'notify_weekly_summary': _notifyWeeklySummary,
+        'notify_goal_reminders': _notifyGoalReminders,
+        'notify_new_features': _notifyNewFeatures,
+        'streak_reminder': _streakReminder,
+      });
+      // Re-sync scheduled push notifications with new prefs
+      _notifService.syncScheduledNotifications();
+    } catch (e) {
+      debugPrint('Failed to save notification prefs: $e');
+    }
+  }
+
   void _showNotificationSettings() {
     showModalBottomSheet(
       context: context,
@@ -286,6 +329,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     (v) {
                   setModal(() => _notificationsEnabled = v);
                   setState(() => _notificationsEnabled = v);
+                  _saveNotificationPrefs();
                 }),
                 const Divider(color: AppColors.border, height: 24),
                 Opacity(
@@ -298,6 +342,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             ? (v) {
                                 setModal(() => _notifyWeeklySummary = v);
                                 setState(() => _notifyWeeklySummary = v);
+                                _saveNotificationPrefs();
                               }
                             : null),
                     _modalToggle(
@@ -307,6 +352,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             ? (v) {
                                 setModal(() => _notifyGoalReminders = v);
                                 setState(() => _notifyGoalReminders = v);
+                                _saveNotificationPrefs();
                               }
                             : null),
                     _modalToggle(
@@ -316,6 +362,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             ? (v) {
                                 setModal(() => _notifyNewFeatures = v);
                                 setState(() => _notifyNewFeatures = v);
+                                _saveNotificationPrefs();
                               }
                             : null),
                     _modalToggle(
@@ -325,6 +372,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             ? (v) {
                                 setModal(() => _streakReminder = v);
                                 setState(() => _streakReminder = v);
+                                _saveNotificationPrefs();
                               }
                             : null),
                   ]),
@@ -351,6 +399,22 @@ class _ProfileScreenState extends State<ProfileScreen> {
               activeTrackColor: AppColors.gold.withValues(alpha: 0.3)),
         ]),
       );
+
+  void _showNotificationInbox() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: AppColors.surface,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      builder: (_) => _NotificationInbox(
+        onChanged: () async {
+          final count = await _notifService.unreadCount();
+          if (mounted) setState(() => _unreadCount = count);
+        },
+      ),
+    );
+  }
 
   void _showReportBugForm() {
     final ctrl = TextEditingController();
@@ -554,18 +618,80 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         .updateUserMetadata({'haptics_enabled': newVal});
                   },
                 ),
+                _tile(
+                  icon: Icons.flag_rounded,
+                  label: 'Weekly Goal',
+                  subtitle: 'Show weekly goal progress on home',
+                  isToggle: true,
+                  toggleValue: _showWeeklyGoal,
+                  onTap: () async {
+                    final newVal = !_showWeeklyGoal;
+                    setState(() => _showWeeklyGoal = newVal);
+                    Haptics.selectionClick();
+                    await _authService
+                        .updateUserMetadata({'show_weekly_goal': newVal});
+                  },
+                ),
+                _tile(
+                  icon: Icons.format_quote_rounded,
+                  label: 'Quote of the Day',
+                  subtitle: 'Show daily quote on home screen',
+                  isToggle: true,
+                  toggleValue: _showQuoteOfDay,
+                  onTap: () async {
+                    final newVal = !_showQuoteOfDay;
+                    setState(() => _showQuoteOfDay = newVal);
+                    Haptics.selectionClick();
+                    await _authService
+                        .updateUserMetadata({'show_quote_of_day': newVal});
+                  },
+                ),
+                const SizedBox(height: 24),
+
+                // ── Tracking section ──────────────────────────────────────
+                _sectionLabel('SHOT TRACKING'),
+                _tile(
+                  icon: Icons.auto_awesome_rounded,
+                  label: 'Track Swishes',
+                  subtitle: 'Separate button for net-only makes',
+                  isToggle: true,
+                  toggleValue: _trackSwishes,
+                  onTap: () async {
+                    final newVal = !_trackSwishes;
+                    setState(() => _trackSwishes = newVal);
+                    Haptics.selectionClick();
+                    await _authService
+                        .updateUserMetadata({'track_swishes': newVal});
+                  },
+                ),
+                _tile(
+                  icon: Icons.air_rounded,
+                  label: 'Track Airballs',
+                  subtitle: 'Separate button for complete misses',
+                  isToggle: true,
+                  toggleValue: _trackAirballs,
+                  onTap: () async {
+                    final newVal = !_trackAirballs;
+                    setState(() => _trackAirballs = newVal);
+                    Haptics.selectionClick();
+                    await _authService
+                        .updateUserMetadata({'track_airballs': newVal});
+                  },
+                ),
                 const SizedBox(height: 24),
 
                 // ── Goals section ────────────────────────────────────────
-                _sectionLabel('GOALS'),
-                _goalTile(
-                  icon: Icons.flag_rounded,
-                  label: 'Training Goals',
-                  value:
-                      '$_weeklyMakesGoal makes · $_weeklySessionGoal sessions/wk',
-                  onTap: () => _showGoalsSheet(),
-                ),
-                const SizedBox(height: 24),
+                if (_showWeeklyGoal) ...[
+                  _sectionLabel('GOALS'),
+                  _goalTile(
+                    icon: Icons.flag_rounded,
+                    label: 'Training Goals',
+                    value:
+                        '$_weeklyMakesGoal makes · $_weeklySessionGoal sessions/wk',
+                    onTap: () => _showGoalsSheet(),
+                  ),
+                  const SizedBox(height: 24),
+                ],
 
                 // ── Support section ──────────────────────────────────────
                 _sectionLabel('LEGAL & SUPPORT'),
@@ -632,6 +758,42 @@ class _ProfileScreenState extends State<ProfileScreen> {
             Text('Your Account', style: AppText.ui(24, weight: FontWeight.w800)),
           ]),
           const Spacer(),
+          GestureDetector(
+            onTap: _showNotificationInbox,
+            child: Stack(clipBehavior: Clip.none, children: [
+              Container(
+                width: 42,
+                height: 42,
+                decoration: BoxDecoration(
+                  color: AppColors.surface,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: AppColors.border),
+                ),
+                child: const Icon(Icons.notifications_none_rounded,
+                    size: 20, color: AppColors.text2),
+              ),
+              if (_unreadCount > 0)
+                Positioned(
+                  top: -4,
+                  right: -4,
+                  child: Container(
+                    width: 18,
+                    height: 18,
+                    decoration: const BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: AppColors.gold,
+                    ),
+                    child: Center(
+                      child: Text(
+                        _unreadCount > 9 ? '9+' : '$_unreadCount',
+                        style: AppText.ui(10,
+                            weight: FontWeight.w800, color: AppColors.bg),
+                      ),
+                    ),
+                  ),
+                ),
+            ]),
+          ),
         ]),
       );
 
@@ -866,6 +1028,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Widget _tile({
     required IconData icon,
     required String label,
+    String? subtitle,
     bool isToggle = false,
     bool toggleValue = false,
     bool badge = false,
@@ -898,9 +1061,17 @@ class _ProfileScreenState extends State<ProfileScreen> {
           ),
           const SizedBox(width: 14),
           Expanded(
-              child: Text(label,
-                  style: AppText.ui(15,
-                      weight: FontWeight.w500, color: Colors.white))),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(label,
+                      style: AppText.ui(15,
+                          weight: FontWeight.w500, color: Colors.white)),
+                  if (subtitle != null)
+                    Text(subtitle,
+                        style: AppText.ui(11, color: AppColors.text3)),
+                ],
+              )),
           if (badge)
             Container(
               width: 7,
@@ -1358,4 +1529,441 @@ class _SubscriptionPortal extends StatelessWidget {
                       weight: FontWeight.w500, color: Colors.white))),
         ]),
       );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  NOTIFICATION INBOX  — premium styled, matches gold app theme
+// ══════════════════════════════════════════════════════════════════════════════
+
+class _NotificationInbox extends StatefulWidget {
+  final VoidCallback onChanged;
+  const _NotificationInbox({required this.onChanged});
+
+  @override
+  State<_NotificationInbox> createState() => _NotificationInboxState();
+}
+
+class _NotificationInboxState extends State<_NotificationInbox> {
+  final _notifService = NotificationService();
+  List<Map<String, dynamic>> _notifications = [];
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final list = await _notifService.getNotifications();
+    if (mounted) setState(() { _notifications = list; _loading = false; });
+  }
+
+  IconData _iconForType(String type) => switch (type) {
+        'weekly_summary' => Icons.bar_chart_rounded,
+        'goal_progress' => Icons.flag_rounded,
+        'streak_reminder' => Icons.local_fire_department_rounded,
+        'new_feature' => Icons.auto_awesome_rounded,
+        _ => Icons.notifications_rounded,
+      };
+
+  Color _colorForType(String type) => switch (type) {
+        'weekly_summary' => AppColors.gold,
+        'goal_progress' => AppColors.green,
+        'streak_reminder' => AppColors.orange,
+        'new_feature' => AppColors.blue,
+        _ => AppColors.text2,
+      };
+
+  String _labelForType(String type) => switch (type) {
+        'weekly_summary' => 'WEEKLY RECAP',
+        'goal_progress' => 'GOAL UPDATE',
+        'streak_reminder' => 'STREAK ALERT',
+        'new_feature' => 'NEW FEATURE',
+        _ => 'NOTIFICATION',
+      };
+
+  String _timeAgo(String iso) {
+    final dt = DateTime.parse(iso);
+    final diff = DateTime.now().difference(dt);
+    if (diff.inMinutes < 1) return 'just now';
+    if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
+    if (diff.inHours < 24) return '${diff.inHours}h ago';
+    if (diff.inDays < 7) return '${diff.inDays}d ago';
+    return '${dt.day}/${dt.month}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final unread = _notifications.where((n) => n['is_read'] == false).length;
+
+    return Container(
+      height: MediaQuery.of(context).size.height * 0.65,
+      padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+      child: Column(children: [
+        // Handle
+        Center(
+            child: Container(
+                width: 40,
+                height: 4,
+                margin: const EdgeInsets.only(bottom: 24),
+                decoration: BoxDecoration(
+                    color: AppColors.border,
+                    borderRadius: BorderRadius.circular(2)))),
+
+        // Header row
+        Row(children: [
+          Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              color: AppColors.gold.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(11),
+            ),
+            child: const Icon(Icons.notifications_rounded,
+                color: AppColors.gold, size: 20),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('NOTIFICATIONS',
+                    style: AppText.ui(14,
+                        color: AppColors.text2,
+                        letterSpacing: 1.2,
+                        weight: FontWeight.w800)),
+                if (unread > 0)
+                  Text('$unread unread',
+                      style: AppText.ui(11,
+                          color: AppColors.gold, weight: FontWeight.w600)),
+              ],
+            ),
+          ),
+          if (unread > 0)
+            GestureDetector(
+              onTap: () async {
+                await _notifService.markAllAsRead();
+                await _load();
+                widget.onChanged();
+              },
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: AppColors.gold.withValues(alpha: 0.10),
+                  borderRadius: BorderRadius.circular(8),
+                  border:
+                      Border.all(color: AppColors.gold.withValues(alpha: 0.25)),
+                ),
+                child: Text('Read all',
+                    style: AppText.ui(11,
+                        color: AppColors.gold, weight: FontWeight.w700)),
+              ),
+            ),
+        ]),
+
+        const SizedBox(height: 20),
+        Container(height: 1, color: AppColors.borderSub),
+        const SizedBox(height: 16),
+
+        // List
+        Expanded(
+          child: _loading
+              ? const Center(
+                  child: CircularProgressIndicator(
+                      color: AppColors.gold, strokeWidth: 2.5))
+              : _notifications.isEmpty
+                  ? _emptyState()
+                  : ListView.separated(
+                      physics: const BouncingScrollPhysics(),
+                      itemCount: _notifications.length,
+                      separatorBuilder: (_, __) =>
+                          const SizedBox(height: 10),
+                      itemBuilder: (_, i) => _notifCard(i),
+                    ),
+        ),
+      ]),
+    );
+  }
+
+  Widget _emptyState() => Center(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Container(
+            width: 72,
+            height: 72,
+            decoration: BoxDecoration(
+              color: AppColors.gold.withValues(alpha: 0.08),
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(Icons.notifications_off_outlined,
+                size: 32, color: AppColors.text3),
+          ),
+          const SizedBox(height: 16),
+          Text('All quiet',
+              style: AppText.ui(17, weight: FontWeight.w700, color: AppColors.text2)),
+          const SizedBox(height: 6),
+          Text("You'll get updates on your progress here",
+              style: AppText.ui(13, color: AppColors.text3)),
+        ]),
+      );
+
+  Widget _notifCard(int i) {
+    final n = _notifications[i];
+    final type = n['type'] as String? ?? '';
+    final isRead = n['is_read'] as bool? ?? false;
+    final color = _colorForType(type);
+    final data = n['data'] as Map<String, dynamic>?;
+
+    return Dismissible(
+      key: ValueKey(n['id']),
+      direction: DismissDirection.endToStart,
+      background: Container(
+        alignment: Alignment.centerRight,
+        padding: const EdgeInsets.only(right: 20),
+        decoration: BoxDecoration(
+          color: AppColors.red.withValues(alpha: 0.12),
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: const Icon(Icons.delete_outline_rounded,
+            color: AppColors.red, size: 20),
+      ),
+      onDismissed: (_) async {
+        final id = n['id'] as String;
+        setState(() => _notifications.removeAt(i));
+        await _notifService.deleteNotification(id);
+        widget.onChanged();
+      },
+      child: GestureDetector(
+        onTap: () async {
+          if (!isRead) {
+            await _notifService.markAsRead(n['id'] as String);
+            setState(() => _notifications[i]['is_read'] = true);
+            widget.onChanged();
+          }
+        },
+        child: Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: isRead ? AppColors.surface : AppColors.surface,
+            border: Border.all(
+              color: isRead
+                  ? AppColors.border
+                  : color.withValues(alpha: 0.30),
+            ),
+            borderRadius: BorderRadius.circular(16),
+            boxShadow: isRead
+                ? null
+                : [
+                    BoxShadow(
+                      color: color.withValues(alpha: 0.06),
+                      blurRadius: 12,
+                      offset: const Offset(0, 4),
+                    ),
+                  ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Top row: type badge + time + unread dot
+              Row(children: [
+                Container(
+                  width: 32,
+                  height: 32,
+                  decoration: BoxDecoration(
+                    color: color.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(9),
+                  ),
+                  child: Icon(_iconForType(type), size: 16, color: color),
+                ),
+                const SizedBox(width: 10),
+                Text(_labelForType(type),
+                    style: AppText.ui(10,
+                        color: color,
+                        letterSpacing: 1.2,
+                        weight: FontWeight.w800)),
+                const Spacer(),
+                Text(
+                  _timeAgo(n['created_at'] as String? ??
+                      DateTime.now().toIso8601String()),
+                  style: AppText.ui(11, color: AppColors.text3),
+                ),
+                if (!isRead) ...[
+                  const SizedBox(width: 8),
+                  Container(
+                    width: 8,
+                    height: 8,
+                    decoration: BoxDecoration(
+                        shape: BoxShape.circle, color: color),
+                  ),
+                ],
+              ]),
+              const SizedBox(height: 12),
+
+              // Title
+              Text(n['title'] as String? ?? '',
+                  style: AppText.ui(15,
+                      weight: FontWeight.w700, color: Colors.white)),
+              const SizedBox(height: 6),
+
+              // Weekly summary — rich layout with stats
+              if (type == 'weekly_summary' &&
+                  data != null &&
+                  data.containsKey('lw_sessions')) ...[
+                // Comparison text
+                if ((data['tw_sessions'] as int? ?? 0) > 0 &&
+                    (data['lw_sessions'] as int? ?? 0) > 0)
+                  _comparisonRow(data)
+                else
+                  Text(n['body'] as String? ?? '',
+                      style: AppText.ui(13, color: AppColors.text3)),
+                const SizedBox(height: 14),
+                // Last week stats
+                Text('LAST WEEK',
+                    style: AppText.ui(9,
+                        color: AppColors.text3,
+                        letterSpacing: 1.0,
+                        weight: FontWeight.w700)),
+                const SizedBox(height: 8),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: AppColors.bg,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: AppColors.borderSub),
+                  ),
+                  child: Row(children: [
+                    _statCol(
+                        '${data['lw_sessions']}', 'Sessions', AppColors.text2),
+                    _statDivider(),
+                    _statCol(
+                        '${data['lw_made']}/${data['lw_attempts']}',
+                        'Shots',
+                        AppColors.text2),
+                    _statDivider(),
+                    _statCol('${data['lw_pct']}%', 'Accuracy',
+                        AppColors.gold),
+                    _statDivider(),
+                    _statCol('${data['lw_best_streak']}', 'Streak',
+                        AppColors.gold),
+                  ]),
+                ),
+              ] else
+                // Fallback for notifications without structured data
+                Text(n['body'] as String? ?? '',
+                    style: AppText.ui(13, color: AppColors.text3)),
+
+              // Non-weekly, non-goal: just body text
+              if (type != 'weekly_summary' && type != 'goal_progress')
+                Text(n['body'] as String? ?? '',
+                    style: AppText.ui(13, color: AppColors.text3)),
+
+              // Goal progress bar
+              if (type == 'goal_progress') ...[
+                Text(n['body'] as String? ?? '',
+                    style: AppText.ui(13, color: AppColors.text3)),
+                if (data != null && data.containsKey('made')) ...[
+                  const SizedBox(height: 14),
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                    decoration: BoxDecoration(
+                      color: AppColors.bg,
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: AppColors.borderSub),
+                    ),
+                    child: Column(children: [
+                      Row(children: [
+                        Text('${data['made']}',
+                            style: AppText.ui(18,
+                                weight: FontWeight.w800, color: AppColors.green)),
+                        Text(' / ${data['goal'] ?? 200}',
+                            style: AppText.ui(18,
+                                weight: FontWeight.w600, color: AppColors.text3)),
+                        const Spacer(),
+                        Text('${data['pct'] ?? 0}%',
+                            style: AppText.ui(14,
+                                weight: FontWeight.w700, color: AppColors.gold)),
+                      ]),
+                      const SizedBox(height: 8),
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(3),
+                        child: SizedBox(
+                          height: 6,
+                          child: LinearProgressIndicator(
+                            value: ((data['pct'] as int?) ?? 0) / 100.0,
+                            backgroundColor: AppColors.borderSub,
+                            valueColor: AlwaysStoppedAnimation(
+                              ((data['pct'] as int?) ?? 0) >= 100
+                                  ? AppColors.gold
+                                  : AppColors.green,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ]),
+                  ),
+                ],
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _comparisonRow(Map<String, dynamic> data) {
+    final lwPct = data['lw_pct'] as int? ?? 0;
+    final twPct = data['tw_pct'] as int? ?? 0;
+    final diff = twPct - lwPct;
+    final twSessions = data['tw_sessions'] as int? ?? 0;
+
+    String msg;
+    Color msgColor;
+    if (diff > 0) {
+      msg = 'Accuracy up $diff% this week';
+      msgColor = AppColors.green;
+    } else if (diff < -3) {
+      msg = 'Accuracy dipped ${diff.abs()}% — time to lock in';
+      msgColor = AppColors.orange;
+    } else {
+      msg = '$twSessions sessions this week so far';
+      msgColor = AppColors.text3;
+    }
+
+    return Row(children: [
+      Icon(
+        diff > 0
+            ? Icons.trending_up_rounded
+            : diff < -3
+                ? Icons.trending_down_rounded
+                : Icons.trending_flat_rounded,
+        size: 16,
+        color: msgColor,
+      ),
+      const SizedBox(width: 6),
+      Expanded(
+        child: Text(msg,
+            style: AppText.ui(13, color: msgColor, weight: FontWeight.w600)),
+      ),
+    ]);
+  }
+
+  Widget _statCol(String value, String label, Color valueColor) => Expanded(
+        child: Column(children: [
+          Text(value,
+              style: AppText.ui(13, weight: FontWeight.w700, color: valueColor),
+              textAlign: TextAlign.center),
+          const SizedBox(height: 2),
+          Text(label,
+              style: AppText.ui(9,
+                  color: AppColors.text3, letterSpacing: 0.5),
+              textAlign: TextAlign.center),
+        ]),
+      );
+
+  Widget _statDivider() => Container(
+      width: 1, height: 28, color: AppColors.borderSub,
+      margin: const EdgeInsets.symmetric(horizontal: 4));
 }

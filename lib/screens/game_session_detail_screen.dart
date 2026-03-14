@@ -39,6 +39,11 @@ class _State extends State<GameSessionDetailScreen>
   HistoryEntry get e => widget.entry;
   GameSessionData get g => e.gameData!;
 
+  bool get _sessionTrackSwishes =>
+      e.originalSession.gameData?['track_swishes'] as bool? ?? true;
+  bool get _sessionTrackAirballs =>
+      e.originalSession.gameData?['track_airballs'] as bool? ?? false;
+
   @override
   void dispose() {
     _anim.dispose();
@@ -127,7 +132,7 @@ class _State extends State<GameSessionDetailScreen>
               _heroCard(),
               const SizedBox(height: 24),
               ..._modeContent(),
-              if (e.shotLog != null && e.shotLog!.isNotEmpty && g.modeId != 'duel') ...[
+              if (e.shotLog != null && e.shotLog!.isNotEmpty && g.modeId != 'duel' && g.modeId != 'three_point_contest') ...[
                 const SizedBox(height: 24),
                 _shotLogSection(),
                 const SizedBox(height: 24),
@@ -351,50 +356,146 @@ class _State extends State<GameSessionDetailScreen>
             ]),
           ])),
       const SizedBox(height: 16),
-      _label('RACK BREAKDOWN'),
-      Row(
-          children: List.generate(5, (i) {
-        final rs = i < racks.length ? racks[i] : 0;
-        final rp = rs / 6.0;
-        // Opacity tiers of e.color — no red/gold/green
-        final rAlpha = rp >= 0.67
-            ? 1.0
-            : rp >= 0.50
-                ? 0.60
-                : 0.35;
-        final rColor = e.color.withValues(alpha: rAlpha);
-        return Expanded(
-            child: Padding(
-          padding: EdgeInsets.only(right: i < 4 ? 8 : 0),
-          child: Container(
-              padding: const EdgeInsets.symmetric(vertical: 16),
-              decoration: BoxDecoration(
-                  color: AppColors.surface,
-                  border: Border.all(color: AppColors.border),
-                  borderRadius: BorderRadius.circular(12)),
-              child: Column(children: [
-                Text('$rs', style: AppText.display(26, color: rColor)),
-                Text('/6', style: AppText.ui(10, color: AppColors.text3)),
-                const SizedBox(height: 4),
-                Text('R${i + 1}',
-                    style: AppText.ui(9,
-                        color: AppColors.text3, weight: FontWeight.w700)),
-                const SizedBox(height: 6),
-                Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 6),
-                    child: ClipRRect(
-                        borderRadius: BorderRadius.circular(2),
-                        child: LinearProgressIndicator(
-                            value: rp,
-                            backgroundColor: AppColors.borderSub,
-                            valueColor: AlwaysStoppedAnimation(rColor),
-                            minHeight: 3))),
-              ])),
-        ));
-      })),
+      _label('RACKS'),
+      ..._rackVisual(racks),
       const SizedBox(height: 14),
       _twoStatCompare('Your Score', '$score pts', 'NBA Avg', '~18 pts'),
     ];
+  }
+
+  List<Widget> _rackVisual(List<int> rackScores) {
+    final moneyIdx = g.stats['moneyRackIndex'] as int? ?? 4;
+    final ballsRaw = g.stats['balls'] as List?;
+    final rackNamesList = (g.stats['rackNames'] as List?)
+        ?.cast<String>() ??
+        ['Left Corner', 'Left Wing', 'Top of Arc', 'Right Wing', 'Right Corner'];
+
+    return [
+      Container(
+        decoration: BoxDecoration(
+          color: AppColors.surface,
+          border: Border.all(color: AppColors.border),
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Column(children: [
+          ...List.generate(5, (r) {
+            final isMoneyRack = r == moneyIdx;
+            final rackName = r < rackNamesList.length ? rackNamesList[r] : 'Rack ${r + 1}';
+            final rs = r < rackScores.length ? rackScores[r] : 0;
+            final maxPts = isMoneyRack ? 10 : 6;
+
+            List<int>? balls;
+            if (ballsRaw != null && r < ballsRaw.length) {
+              balls = (ballsRaw[r] as List).cast<int>();
+            }
+
+            return Column(children: [
+              if (r > 0)
+                Container(height: 1, color: AppColors.borderSub),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                child: Row(children: [
+                  // Rack name
+                  SizedBox(
+                    width: 80,
+                    child: Text(rackName,
+                        style: AppText.ui(11,
+                            color: isMoneyRack ? AppColors.gold : AppColors.text1,
+                            weight: FontWeight.w600)),
+                  ),
+                  const SizedBox(width: 10),
+                  // 5 balls
+                  Expanded(
+                    child: balls != null
+                        ? Row(
+                            children: List.generate(5, (b) {
+                              final isMoney = isMoneyRack || (b == 4);
+                              final state = b < balls!.length ? balls[b] : 0;
+                              final isMade = state == 1;
+                              final isMissed = state == 2;
+                              return Expanded(
+                                child: Padding(
+                                  padding: EdgeInsets.only(right: b < 4 ? 4 : 0),
+                                  child: Container(
+                                    height: 30,
+                                    decoration: BoxDecoration(
+                                      color: isMade
+                                          ? (isMoney ? AppColors.gold : AppColors.green)
+                                          : isMissed
+                                              ? AppColors.red.withValues(alpha: 0.15)
+                                              : AppColors.borderSub,
+                                      borderRadius: BorderRadius.circular(6),
+                                      border: isMoney && !isMade
+                                          ? Border.all(
+                                              color: AppColors.gold.withValues(alpha: 0.3),
+                                              width: 1)
+                                          : null,
+                                    ),
+                                    child: Center(
+                                      child: isMade
+                                          ? Icon(Icons.check_rounded,
+                                              size: 14,
+                                              color: Colors.black.withValues(alpha: 0.6))
+                                          : isMissed
+                                              ? const Icon(Icons.close_rounded,
+                                                  size: 13, color: AppColors.red)
+                                              : const SizedBox.shrink(),
+                                    ),
+                                  ),
+                                ),
+                              );
+                            }),
+                          )
+                        : ClipRRect(
+                            borderRadius: BorderRadius.circular(2),
+                            child: LinearProgressIndicator(
+                              value: rs / maxPts,
+                              backgroundColor: AppColors.borderSub,
+                              valueColor: AlwaysStoppedAnimation(e.color),
+                              minHeight: 3,
+                            ),
+                          ),
+                  ),
+                  const SizedBox(width: 12),
+                  // Score
+                  SizedBox(
+                    width: 36,
+                    child: Text('$rs/$maxPts',
+                        textAlign: TextAlign.right,
+                        style: AppText.ui(12,
+                            color: e.color,
+                            weight: FontWeight.w700)),
+                  ),
+                ]),
+              ),
+            ]);
+          }),
+        ]),
+      ),
+      const SizedBox(height: 10),
+      Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+        _ballLegendItem(AppColors.green, 'Made'),
+        const SizedBox(width: 14),
+        _ballLegendItem(AppColors.gold, 'Money Ball'),
+        const SizedBox(width: 14),
+        _ballLegendItem(AppColors.red.withValues(alpha: 0.15), 'Missed'),
+      ]),
+    ];
+  }
+
+  Widget _ballLegendItem(Color color, String label) {
+    return Row(children: [
+      Container(
+        width: 10,
+        height: 10,
+        decoration: BoxDecoration(
+          color: color,
+          borderRadius: BorderRadius.circular(3),
+        ),
+      ),
+      const SizedBox(width: 4),
+      Text(label, style: AppText.ui(9, color: AppColors.text3)),
+    ]);
   }
 
   // ══════════════════════════════════════════════════════════════════════════
@@ -474,13 +575,18 @@ class _State extends State<GameSessionDetailScreen>
               border: Border.all(color: AppColors.border)),
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             // Shared legend — same style as live sessions
-            Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-              _duelLegendDot(e.color, 'swish', filled: true),
-              const SizedBox(width: 16),
-              _duelLegendDot(e.color, 'made', filled: false),
-              const SizedBox(width: 16),
-              _duelLegendDot(AppColors.border, 'miss', filled: false),
-            ]),
+            Wrap(
+              alignment: WrapAlignment.center,
+              spacing: 16,
+              runSpacing: 8,
+              children: [
+                _duelLegendDot(e.color, 'swish', filled: true),
+                _duelLegendDot(e.color, 'made', filled: false),
+                _duelLegendDot(AppColors.red, 'miss', filled: false),
+                if (p1log.contains(3) || p2log.contains(3))
+                  _duelLegendDot(AppColors.red, 'airball', filled: true),
+              ],
+            ),
             if (p1log.isNotEmpty) ...[
               const SizedBox(height: 16),
               Text(p1n,
@@ -503,8 +609,8 @@ class _State extends State<GameSessionDetailScreen>
     ];
   }
 
-  /// Normalise log entry: bool (old format) or int (new format 0/1/2)
-  /// Returns 0=miss, 1=make, 2=swish
+  /// Normalise log entry: bool (old format) or int (new format 0/1/2/3)
+  /// Returns 0=miss, 1=make, 2=swish, 3=airball
   int _normaliseShot(dynamic v) {
     if (v is bool) return v ? 1 : 0;
     if (v is int) return v;
@@ -550,7 +656,7 @@ class _State extends State<GameSessionDetailScreen>
         ]));
   }
 
-  // Dots matching live session style: swish=filled, make=outline, miss=gray outline
+  // Dots: swish=filled blue, make=outline blue, miss=outline red, airball=filled red
   Widget _duelDots(List<int> log, Color modeColor) {
     return Wrap(
       spacing: 6,
@@ -558,14 +664,23 @@ class _State extends State<GameSessionDetailScreen>
       children: log.map((v) {
         final isMiss = v == 0;
         final isSwish = v == 2;
+        final isAirball = v == 3;
         return Container(
           width: 12,
           height: 12,
           decoration: BoxDecoration(
             shape: BoxShape.circle,
-            color: isSwish ? modeColor : Colors.transparent,
+            color: isAirball
+                ? AppColors.red
+                : isSwish
+                    ? modeColor
+                    : Colors.transparent,
             border: Border.all(
-              color: isMiss ? AppColors.border : modeColor,
+              color: isAirball
+                  ? AppColors.red
+                  : isMiss
+                      ? AppColors.red
+                      : modeColor,
               width: 1.5,
             ),
           ),
@@ -648,7 +763,7 @@ class _State extends State<GameSessionDetailScreen>
       const SizedBox(height: 16),
       _label('LETTERS'),
       Row(children: [
-        // P1 = e.color letters (earned = lit, unearned = dim)
+        // P1 letters — earned in e.color (purple)
         Expanded(
             child: Container(
                 padding: const EdgeInsets.all(16),
@@ -677,7 +792,7 @@ class _State extends State<GameSessionDetailScreen>
                           color: AppColors.text2, weight: FontWeight.w600)),
                 ]))),
         const SizedBox(width: 12),
-        // P2 = neutral (opponent), earned letters in text2
+        // P2 letters — earned in e.color (purple)
         Expanded(
             child: Container(
                 padding: const EdgeInsets.all(16),
@@ -697,7 +812,7 @@ class _State extends State<GameSessionDetailScreen>
                               child: Text(word[i],
                                   style: AppText.display(26,
                                       color: i < p2l
-                                          ? AppColors.text2
+                                          ? e.color
                                           : AppColors.text3
                                               .withValues(alpha: 0.18)))))),
                   const SizedBox(height: 6),
@@ -719,8 +834,13 @@ class _State extends State<GameSessionDetailScreen>
     final made = g.stats['made'] as int? ?? 0;
     final att = g.stats['attempts'] as int? ?? 0;
     final pct = att > 0 ? made / att : 0.0;
+    final position = g.stats['position'] as String?;
 
     return [
+      if (position != null) ...[
+        _infoRow(Icons.location_on_rounded, 'Position', position),
+        const SizedBox(height: 14),
+      ],
       _label('60-SECOND RESULTS'),
       Container(
           padding: const EdgeInsets.all(20),
@@ -774,8 +894,13 @@ class _State extends State<GameSessionDetailScreen>
     final made = g.stats['totalMade'] as int? ?? 0;
     final total = g.stats['totalAttempts'] as int? ?? 0;
     final pct = total > 0 ? made / total : 0.0;
+    final position = g.stats['position'] as String?;
 
     return [
+      if (position != null) ...[
+        _infoRow(Icons.location_on_rounded, 'Position', position),
+        const SizedBox(height: 14),
+      ],
       _label('STREAK RESULTS'),
       Container(
           padding: const EdgeInsets.all(20),
@@ -845,8 +970,14 @@ class _State extends State<GameSessionDetailScreen>
     final att = g.stats['attempts'] as int? ?? 0;
     final pct = att > 0 ? made / att : 0.0;
     final done = levels >= total;
+    final difficulty = g.stats['difficulty'] as String?;
+    final ftTarget = g.stats['ftTarget'] as int? ?? 10;
 
     return [
+      if (difficulty != null) ...[
+        _infoRow(Icons.tune_rounded, 'Difficulty', '$difficulty ($ftTarget in a row)'),
+        const SizedBox(height: 14),
+      ],
       if (done) ...[
         _completedBanner('All $total Levels Cleared! 🏆'),
         const SizedBox(height: 14),
@@ -908,7 +1039,7 @@ class _State extends State<GameSessionDetailScreen>
   // ══════════════════════════════════════════════════════════════════════════
 
   List<Widget> _hotSpotContent() {
-    const spots = [
+    final spots = (g.stats['spotNames'] as List?)?.cast<String>() ?? const [
       'Left Corner',
       'Left Wing',
       'Top of Arc',
@@ -1155,7 +1286,7 @@ class _State extends State<GameSessionDetailScreen>
     final points = <double>[];
     int m = 0;
     for (int i = 0; i < log.length; i++) {
-      if (log[i] != ShotResult.miss) m++;
+      if (log[i] == ShotResult.make || log[i] == ShotResult.swish) m++;
       points.add(m / (i + 1));
     }
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -1177,7 +1308,6 @@ class _State extends State<GameSessionDetailScreen>
 
   Widget _shotLogSection() {
     final log = e.shotLog!;
-    final modeColor = e.color;
 
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       _label('SHOT LOG'),
@@ -1195,20 +1325,30 @@ class _State extends State<GameSessionDetailScreen>
                         height: 12,
                         decoration: BoxDecoration(
                           shape: BoxShape.circle,
-                          color: r == ShotResult.swish ? modeColor : Colors.transparent,
+                          color: r == ShotResult.swish
+                              ? AppColors.green
+                              : r == ShotResult.airball
+                                  ? AppColors.red
+                                  : Colors.transparent,
                           border: Border.all(
-                            color: r == ShotResult.miss
-                                ? AppColors.border
-                                : modeColor,
+                            color: (r == ShotResult.make || r == ShotResult.swish)
+                                ? AppColors.green
+                                : AppColors.red,
                             width: 1.5,
                           ),
                         )))
                     .toList()),
             const SizedBox(height: 16),
             Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-              _legendDot(modeColor, 'made', isOutline: true),
-              const SizedBox(width: 16),
-              _legendDot(modeColor, 'swish', isOutline: false),
+              _legendDot(AppColors.green, 'made', isOutline: true),
+              if (_sessionTrackSwishes) ...[
+                const SizedBox(width: 16),
+                _legendDot(AppColors.green, 'swish', isOutline: false),
+              ],
+              if (_sessionTrackAirballs) ...[
+                const SizedBox(width: 16),
+                _legendDot(AppColors.red, 'airball', isOutline: false),
+              ],
               const SizedBox(width: 16),
               _legendDot(AppColors.border, 'missed', isOutline: true),
             ]),

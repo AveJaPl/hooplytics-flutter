@@ -14,13 +14,14 @@ import '../utils/haptics.dart';
 // ═══════════════════════════════════════════════════════════════════════════
 
 class TrackingResult {
-  final int made, swishes, attempts, bestStreak;
+  final int made, swishes, airballs, attempts, bestStreak;
   final Duration elapsed;
   final List<ShotResult> log;
 
   const TrackingResult({
     required this.made,
     required this.swishes,
+    required this.airballs,
     required this.attempts,
     required this.bestStreak,
     required this.elapsed,
@@ -48,6 +49,7 @@ class TrackingBody extends StatefulWidget {
   final Color? accentColor;
   final bool voiceEnabled;
   final bool swishEnabled;
+  final bool airballEnabled;
 
   /// Auto-call onFinished when attempts reach this value
   final int? autoFinishAt;
@@ -62,6 +64,7 @@ class TrackingBody extends StatefulWidget {
     this.accentColor,
     this.voiceEnabled = true,
     this.swishEnabled = true,
+    this.airballEnabled = false,
     this.autoFinishAt,
     required this.onBack,
     required this.onFinished,
@@ -74,7 +77,7 @@ class TrackingBody extends StatefulWidget {
 class _TrackingBodyState extends State<TrackingBody>
     with TickerProviderStateMixin {
   // ── State ──────────────────────────────────────────────────────────────────
-  int _made = 0, _swishes = 0, _attempts = 0, _streak = 0, _bestStreak = 0;
+  int _made = 0, _swishes = 0, _airballs = 0, _attempts = 0, _streak = 0, _bestStreak = 0;
   final List<ShotResult> _log = [];
   bool _finished = false;
 
@@ -100,6 +103,8 @@ class _TrackingBodyState extends State<TrackingBody>
       vsync: this, duration: const Duration(milliseconds: 240));
   late final AnimationController _swishPressCtrl = AnimationController(
       vsync: this, duration: const Duration(milliseconds: 240));
+  late final AnimationController _airballPressCtrl = AnimationController(
+      vsync: this, duration: const Duration(milliseconds: 240));
   late final AnimationController _pulsCtrl = AnimationController(
       vsync: this, duration: const Duration(milliseconds: 850))
     ..repeat(reverse: true);
@@ -110,6 +115,7 @@ class _TrackingBodyState extends State<TrackingBody>
   late final Animation<double> _makeAnim = _pressAnim(_makePressCtrl);
   late final Animation<double> _missAnim = _pressAnim(_missPressCtrl);
   late final Animation<double> _swishAnim = _pressAnim(_swishPressCtrl);
+  late final Animation<double> _airballAnim = _pressAnim(_airballPressCtrl);
 
   Animation<double> _pressAnim(AnimationController c) =>
       TweenSequence<double>([
@@ -161,6 +167,7 @@ class _TrackingBodyState extends State<TrackingBody>
     _makePressCtrl.dispose();
     _missPressCtrl.dispose();
     _swishPressCtrl.dispose();
+    _airballPressCtrl.dispose();
     _pulsCtrl.dispose();
     _entryCtrl.dispose();
     super.dispose();
@@ -261,7 +268,7 @@ class _TrackingBodyState extends State<TrackingBody>
       _log.add(swish ? ShotResult.swish : ShotResult.make);
     });
     _flashFn(
-        swish ? '+ SWISH' : '+ MADE', swish ? AppColors.green : AppColors.gold);
+        swish ? '+ SWISH' : '+ MADE', AppColors.green);
     (swish ? _swishPressCtrl : _makePressCtrl).forward(from: 0);
     _checkAutoFinish();
   }
@@ -279,6 +286,20 @@ class _TrackingBodyState extends State<TrackingBody>
     _checkAutoFinish();
   }
 
+  void _applyAirball() {
+    if (_finished) return;
+    Haptics.lightImpact();
+    setState(() {
+      _attempts++;
+      _airballs++;
+      _streak = 0;
+      _log.add(ShotResult.airball);
+    });
+    _flashFn('AIRBALL', AppColors.red);
+    _airballPressCtrl.forward(from: 0);
+    _checkAutoFinish();
+  }
+
   void _applyUndo() {
     if (_finished) return;
     if (_log.isEmpty) return;
@@ -286,11 +307,12 @@ class _TrackingBodyState extends State<TrackingBody>
     setState(() {
       final last = _log.removeLast();
       _attempts--;
-      if (last != ShotResult.miss) {
+      if (last == ShotResult.make || last == ShotResult.swish) {
         _made--;
         if (last == ShotResult.swish) _swishes--;
-        _streak = _recomputeStreak();
       }
+      if (last == ShotResult.airball) _airballs--;
+      _streak = _recomputeStreak();
     });
     _flashFn('UNDO', AppColors.blue);
   }
@@ -310,7 +332,7 @@ class _TrackingBodyState extends State<TrackingBody>
   int _recomputeStreak() {
     int s = 0;
     for (final r in _log.reversed) {
-      if (r != ShotResult.miss) {
+      if (r == ShotResult.make || r == ShotResult.swish) {
         s++;
       } else {
         break;
@@ -355,6 +377,7 @@ class _TrackingBodyState extends State<TrackingBody>
     widget.onFinished(TrackingResult(
       made: _made,
       swishes: _swishes,
+      airballs: _airballs,
       attempts: _attempts,
       bestStreak: _bestStreak,
       elapsed: _sw.elapsed,
@@ -575,9 +598,15 @@ class _TrackingBodyState extends State<TrackingBody>
                             shape: BoxShape.circle,
                             color: r == ShotResult.swish
                                 ? AppColors.green
-                                : r == ShotResult.make
-                                    ? AppColors.gold
-                                    : AppColors.red.withValues(alpha: 0.55),
+                                : r == ShotResult.airball
+                                    ? AppColors.red
+                                    : Colors.transparent,
+                            border: Border.all(
+                              color: (r == ShotResult.make || r == ShotResult.swish)
+                                  ? AppColors.green
+                                  : AppColors.red,
+                              width: 1.5,
+                            ),
                           )))
                       .toList(),
             ),
@@ -588,6 +617,26 @@ class _TrackingBodyState extends State<TrackingBody>
   // ── Track buttons ──────────────────────────────────────────────────────────
 
   Widget _trackBtns() => Row(children: [
+        if (widget.airballEnabled) ...[
+          Expanded(
+            child: AnimatedBuilder(
+              animation: _airballPressCtrl,
+              builder: (_, __) => Transform.scale(
+                scale: _airballAnim.value,
+                child: _ActionBtn(
+                    label: 'AIRBALL',
+                    icon: Icons.air_rounded,
+                    textColor: AppColors.bg,
+                    iconColor: AppColors.bg,
+                    bg: AppColors.red,
+                    border: Colors.transparent,
+                    shadow: AppColors.red.withValues(alpha: 0.25),
+                    onTap: _applyAirball),
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+        ],
         Expanded(
           child: AnimatedBuilder(
             animation: _missPressCtrl,
@@ -598,13 +647,13 @@ class _TrackingBodyState extends State<TrackingBody>
                   icon: Icons.close_rounded,
                   textColor: AppColors.red,
                   iconColor: AppColors.red,
-                  bg: AppColors.red.withValues(alpha: 0.1),
-                  border: AppColors.red.withValues(alpha: 0.3),
+                  bg: Colors.transparent,
+                  border: AppColors.red,
                   onTap: _applyMiss),
             ),
           ),
         ),
-        const SizedBox(width: 12),
+        const SizedBox(width: 10),
         Expanded(
           child: AnimatedBuilder(
             animation: _makePressCtrl,
@@ -613,16 +662,16 @@ class _TrackingBodyState extends State<TrackingBody>
               child: _ActionBtn(
                   label: 'MADE',
                   icon: Icons.check_circle_outline_rounded,
-                  textColor: AppColors.gold,
-                  iconColor: AppColors.gold,
+                  textColor: AppColors.green,
+                  iconColor: AppColors.green,
                   bg: Colors.transparent,
-                  border: AppColors.gold,
+                  border: AppColors.green,
                   onTap: () => _applyMake(swish: false)),
             ),
           ),
         ),
         if (widget.swishEnabled) ...[
-          const SizedBox(width: 12),
+          const SizedBox(width: 10),
           Expanded(
             child: AnimatedBuilder(
               animation: _swishPressCtrl,
@@ -785,7 +834,7 @@ class _TrendPainter extends CustomPainter {
     final pts = <double>[];
     int m = 0;
     for (int i = 0; i < log.length; i++) {
-      if (log[i] != ShotResult.miss) m++;
+      if (log[i] == ShotResult.make || log[i] == ShotResult.swish) m++;
       pts.add(m / (i + 1));
     }
     final step = size.width / math.max(pts.length - 1, 1);

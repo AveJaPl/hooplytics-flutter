@@ -554,9 +554,6 @@ class _StatsScreenState extends State<StatsScreen>
   // ── Zone breakdown ────────────────────────────────────────────────────────────
 
   Widget _zoneBreakdown(List<_ZoneStat> zones) {
-    final maxPct =
-        zones.isEmpty ? 0.0 : zones.map((z) => z.pct).reduce(math.max);
-
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 24),
       child: Container(
@@ -568,7 +565,7 @@ class _StatsScreenState extends State<StatsScreen>
         ),
         child: Column(
           children:
-              zones.map((z) => _ZoneRow(zone: z, maxPct: maxPct)).toList(),
+              zones.map((z) => _ZoneRow(zone: z)).toList(),
         ),
       ),
     );
@@ -677,8 +674,7 @@ class _RecordCard extends StatelessWidget {
 
 class _ZoneRow extends StatelessWidget {
   final _ZoneStat zone;
-  final double maxPct;
-  const _ZoneRow({required this.zone, required this.maxPct});
+  const _ZoneRow({required this.zone});
 
   @override
   Widget build(BuildContext context) {
@@ -706,7 +702,7 @@ class _ZoneRow extends StatelessWidget {
               child: Stack(children: [
                 Container(height: 8, color: AppColors.borderSub),
                 FractionallySizedBox(
-                  widthFactor: maxPct > 0 ? zone.pct / maxPct : 0.0,
+                  widthFactor: zone.pct.clamp(0.0, 1.0),
                   child: Container(
                     height: 8,
                     decoration: BoxDecoration(
@@ -735,9 +731,9 @@ class _ZoneRow extends StatelessWidget {
                 style: AppText.ui(12, color: AppColors.text2)),
             const Spacer(),
             // Hot/Cold badge
-            if (zone.pct >= 0.75)
+            if (zone.attempts > 0 && zone.pct >= 0.75)
               const _Badge('🔥 Hot zone', AppColors.green)
-            else if (zone.pct < 0.50)
+            else if (zone.attempts > 0 && zone.pct < 0.50)
               const _Badge('❄️ Cold zone', AppColors.blue),
           ]),
         ),
@@ -823,11 +819,17 @@ class _DonutChartPainter extends CustomPainter {
     const gap = 0.025; // gap in radians between segments
     double start = -math.pi / 2;
 
+    // Count non-zero segments for gap calculation
+    final nonZero = values.where((v) => v > 0).length;
+    final effectiveGap = nonZero > 1 ? gap : 0.0;
+
     for (int i = 0; i < values.length; i++) {
-      final sweep = values[i] * 2 * math.pi - gap;
+      if (values[i] <= 0) continue;
+      final sweep = values[i] * 2 * math.pi - effectiveGap;
+      if (sweep <= 0) continue;
       canvas.drawArc(
         Rect.fromCircle(center: c, radius: r - 8),
-        start + gap / 2,
+        start + effectiveGap / 2,
         sweep,
         false,
         Paint()
@@ -837,7 +839,7 @@ class _DonutChartPainter extends CustomPainter {
           ..strokeCap = StrokeCap.butt
           ..isAntiAlias = true,
       );
-      start += sweep + gap;
+      start += sweep + effectiveGap;
     }
 
     // Inner background circle

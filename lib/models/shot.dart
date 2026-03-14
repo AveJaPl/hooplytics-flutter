@@ -5,6 +5,7 @@ class Shot {
   final int orderIdx;
   final bool isMake;
   final bool isSwish;
+  final bool isAirball;
   final DateTime? createdAt;
 
   Shot({
@@ -14,6 +15,7 @@ class Shot {
     required this.orderIdx,
     required this.isMake,
     required this.isSwish,
+    this.isAirball = false,
     this.createdAt,
   });
 
@@ -25,6 +27,7 @@ class Shot {
       'order_idx': orderIdx,
       'is_make': isMake,
       'is_swish': isSwish,
+      'is_airball': isAirball,
       if (createdAt != null) 'created_at': createdAt!.toIso8601String(),
     };
   }
@@ -37,6 +40,7 @@ class Shot {
       orderIdx: json['order_idx'] as int,
       isMake: json['is_make'] as bool,
       isSwish: json['is_swish'] as bool? ?? false,
+      isAirball: json['is_airball'] as bool? ?? false,
       createdAt: json['created_at'] != null
           ? DateTime.parse(json['created_at'] as String)
           : null,
@@ -44,4 +48,4 @@ class Shot {
   }
 }
 
-enum ShotResult { miss, make, swish }
+enum ShotResult { miss, make, swish, airball }

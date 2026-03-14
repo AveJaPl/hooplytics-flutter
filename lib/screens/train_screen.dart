@@ -7,6 +7,7 @@ import 'three_point_contest_screen.dart';
 import 'duel_screen.dart';
 import 'horse_screen.dart';
 import 'solo_challenge_screen.dart';
+import 'game_setup_screen.dart';
 
 // ═════════════════════════════════════════════════════════════════════════════
 //  DATA  –  Game mode definitions
@@ -52,7 +53,7 @@ const _allModes = [
     subtitle: 'NBA All-Star style',
     description:
         'Hit as many threes as possible from 5 corner racks. Each rack has 5 balls — the last one is a money ball worth 2 points.',
-    details: '25 shots · 5 racks · Timed',
+    details: '25 shots · 5 racks · Timer optional',
     icon: Icons.sports_basketball_rounded,
     color: Color(0xFFD4A843),
     category: ModeCategory.featured,
@@ -399,8 +400,20 @@ class _TrainScreenState extends State<TrainScreen>
         screen = const HorseScreen();
       case 'beat_the_clock':
       case 'streak_mode':
-      case 'pressure_fts':
+        screen = GameSetupScreen(
+            modeId: mode.id,
+            title: mode.title,
+            color: mode.color,
+            requiredPositions: 1);
       case 'hot_spot':
+        screen = GameSetupScreen(
+            modeId: mode.id,
+            title: mode.title,
+            color: mode.color,
+            requiredPositions: 5);
+      case 'pressure_fts':
+        _showFtDifficultyPicker(mode);
+        return;
       case 'around_the_world':
       case 'mikan_drill':
         screen = SoloChallengeScreen(
@@ -409,6 +422,27 @@ class _TrainScreenState extends State<TrainScreen>
         screen = const SessionSetupScreen();
     }
     Navigator.push(context, _fade(screen));
+  }
+
+  void _showFtDifficultyPicker(GameMode mode) {
+    Haptics.mediumImpact();
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (_) => _FtDifficultySheet(
+        color: mode.color,
+        onSelect: (target) {
+          Navigator.pop(context);
+          Navigator.push(
+              context,
+              _fade(SoloChallengeScreen(
+                  modeId: mode.id,
+                  title: mode.title,
+                  color: mode.color,
+                  ftTargetOverride: target)));
+        },
+      ),
+    );
   }
 
   PageRoute _fade(Widget page) => PageRouteBuilder(
@@ -806,7 +840,7 @@ class _ModeDetailSheet extends StatelessWidget {
         return [
           'Shoot from 5 positions along the 3-point arc.',
           'Each position has 5 balls. The last ball (money ball) counts as 2 points.',
-          'You have 60 seconds — move fast between racks.',
+          'Timer is optional — enable or disable in setup.',
           'Highest score wins. NBA record is 27/30.',
         ];
       case 'duel':
@@ -828,7 +862,7 @@ class _ModeDetailSheet extends StatelessWidget {
           'Choose any zone before the game starts.',
           'Timer counts down from 60 seconds.',
           'Make as many shots as possible before time runs out.',
-          'Your best score is saved as your record.',
+          'If you released your shot before the buzzer, you can still record it.',
         ];
       case 'streak_mode':
         return [
@@ -946,4 +980,108 @@ class _InfoChip extends StatelessWidget {
                   color: AppColors.text2, weight: FontWeight.w500)),
         ]),
       );
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  PRESSURE FREE THROWS — DIFFICULTY PICKER
+// ═════════════════════════════════════════════════════════════════════════════
+
+class _FtDifficultySheet extends StatelessWidget {
+  final Color color;
+  final void Function(int target) onSelect;
+
+  const _FtDifficultySheet({required this.color, required this.onSelect});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+      padding: const EdgeInsets.fromLTRB(24, 20, 24, 28),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        border: Border.all(color: AppColors.border),
+        borderRadius: BorderRadius.circular(24),
+      ),
+      child: Column(mainAxisSize: MainAxisSize.min, children: [
+        Center(
+          child: Container(
+            width: 36,
+            height: 3,
+            margin: const EdgeInsets.only(bottom: 20),
+            decoration: BoxDecoration(
+              color: AppColors.border,
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+        ),
+        Text('SELECT DIFFICULTY',
+            style: AppText.ui(11,
+                color: color,
+                letterSpacing: 1.6,
+                weight: FontWeight.w800)),
+        const SizedBox(height: 4),
+        Text('Pressure Free Throws',
+            style: AppText.ui(20, weight: FontWeight.w800)),
+        const SizedBox(height: 6),
+        Text('How many consecutive makes per level?',
+            style: AppText.ui(13, color: AppColors.text2)),
+        const SizedBox(height: 24),
+        _diffOption(context, 'Easy', '3 in a row', 3,
+            const Color(0xFF3DD68C)),
+        const SizedBox(height: 10),
+        _diffOption(context, 'Medium', '5 in a row', 5,
+            const Color(0xFFD4A843)),
+        const SizedBox(height: 10),
+        _diffOption(context, 'Hard', '10 in a row', 10,
+            const Color(0xFFFF7A5C)),
+      ]),
+    );
+  }
+
+  Widget _diffOption(BuildContext context, String label, String sub,
+      int target, Color diffColor) {
+    return GestureDetector(
+      onTap: () {
+        Haptics.mediumImpact();
+        onSelect(target);
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+        decoration: BoxDecoration(
+          color: AppColors.bg,
+          border: Border.all(color: AppColors.border),
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Row(children: [
+          Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: diffColor.withValues(alpha: 0.12),
+              border: Border.all(color: diffColor.withValues(alpha: 0.30)),
+            ),
+            child: Center(
+              child: Text('$target',
+                  style: AppText.display(18, color: diffColor)),
+            ),
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(label,
+                    style: AppText.ui(15, weight: FontWeight.w700)),
+                Text(sub,
+                    style: AppText.ui(12, color: AppColors.text2)),
+              ],
+            ),
+          ),
+          const Icon(Icons.chevron_right_rounded,
+              color: AppColors.text3, size: 22),
+        ]),
+      ),
+    );
+  }
 }

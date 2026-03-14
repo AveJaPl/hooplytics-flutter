@@ -177,6 +177,11 @@ class HistoryEntry {
         }
       }
 
+      final gd = s.gameData;
+      final sessionTrackSwishes = gd?['track_swishes'] as bool? ?? true;
+      final sessionTrackAirballs = gd?['track_airballs'] as bool? ?? false;
+      final airballCount = sortedShots?.where((e) => e.isAirball).length ?? 0;
+
       hoopSession = HoopSession(
         id: s.selectionId,
         mode: s.mode == 'position' ? SessionMode.position : SessionMode.range,
@@ -191,6 +196,7 @@ class HistoryEntry {
         shotHistory: sortedShots?.map((e) {
           if (e.isSwish) return ShotResult.swish;
           if (e.isMake) return ShotResult.make;
+          if (e.isAirball) return ShotResult.airball;
           return ShotResult.miss;
         }).toList(),
         maxStreak: s.bestStreak,
@@ -198,6 +204,9 @@ class HistoryEntry {
         swishStreak: maxSwishStreak,
         swishPct: s.attempts > 0 ? (s.swishes * 100 ~/ s.attempts) : 0,
         globalAvgPct: 45,
+        trackSwishes: sessionTrackSwishes,
+        trackAirballs: sessionTrackAirballs,
+        airballCount: airballCount > 0 ? airballCount : null,
       );
     }
 

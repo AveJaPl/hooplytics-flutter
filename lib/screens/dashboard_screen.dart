@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import '../main.dart';
 import '../utils/haptics.dart';
 import '../services/auth_service.dart';
+import '../services/notification_service.dart';
 import 'session_setup_screen.dart';
 import 'stats_screen.dart';
 import 'profile_screen.dart';
@@ -39,6 +40,8 @@ class _DashboardScreenState extends State<DashboardScreen>
       });
 
   int _weeklyMakesGoal = 200;
+  bool _showWeeklyGoal = true;
+  bool _showQuoteOfDay = true;
 
   @override
   void initState() {
@@ -47,6 +50,12 @@ class _DashboardScreenState extends State<DashboardScreen>
     _loadUserSettings();
     _sessionSub = _sessionService.updates.listen((_) => _reload());
     _authSub = _authService.updates.listen((_) => _reload());
+    // Notifications — check & schedule
+    final notif = NotificationService();
+    notif.checkWeeklySummary();
+    notif.checkStreakReminder();
+    notif.checkGoalProgress();
+    notif.syncScheduledNotifications();
   }
 
   void _loadUserSettings() {
@@ -55,6 +64,8 @@ class _DashboardScreenState extends State<DashboardScreen>
       final meta = user.userMetadata!;
       setState(() {
         _weeklyMakesGoal = meta['weekly_makes_goal'] as int? ?? 200;
+        _showWeeklyGoal = meta['show_weekly_goal'] as bool? ?? true;
+        _showQuoteOfDay = meta['show_quote_of_day'] as bool? ?? true;
         Haptics.enabled = meta['haptics_enabled'] as bool? ?? true;
       });
     }
@@ -179,16 +190,20 @@ class _DashboardScreenState extends State<DashboardScreen>
                     const SizedBox(height: 28),
 
                     // 2. Quote of the day
-                    _label('QUOTE OF THE DAY'),
-                    const SizedBox(height: 12),
-                    _quoteOfTheDay(),
-                    const SizedBox(height: 28),
+                    if (_showQuoteOfDay) ...[
+                      _label('QUOTE OF THE DAY'),
+                      const SizedBox(height: 12),
+                      _quoteOfTheDay(),
+                      const SizedBox(height: 28),
+                    ],
 
                     // 3. Weekly goal
-                    _label('WEEKLY GOAL'),
-                    const SizedBox(height: 12),
-                    _weeklyGoal(weeklyMade),
-                    const SizedBox(height: 28),
+                    if (_showWeeklyGoal) ...[
+                      _label('WEEKLY GOAL'),
+                      const SizedBox(height: 12),
+                      _weeklyGoal(weeklyMade),
+                      const SizedBox(height: 28),
+                    ],
 
                     // 4. Accuracy trend
                     _label('ACCURACY TREND'),
@@ -650,41 +665,41 @@ class _DashboardScreenState extends State<DashboardScreen>
   // ══════════════════════════════════════════════════════════════════════════
 
   static const _quotes = [
-    _Quote('"You miss 100% of the shots you don\'t take."', '— Wayne Gretzky'),
+    _Quote('"You miss 100% of the shots you don\'t take."', 'Wayne Gretzky'),
     _Quote('"Hard work beats talent when talent doesn\'t work hard."',
-        '— Tim Notke'),
+        'Tim Notke'),
     _Quote(
         '"The only way to get better is to challenge yourself every single day."',
-        '— LeBron James'),
+        'LeBron James'),
     _Quote(
         '"Talent wins games, but teamwork and intelligence wins championships."',
-        '— Michael Jordan'),
+        'Michael Jordan'),
     _Quote(
         '"Excellence is not a singular act, but a habit. You are what you repeatedly do."',
-        '— Shaquille O\'Neal'),
+        'Shaquille O\'Neal'),
     _Quote('"I\'ve missed more than 9,000 shots. That\'s why I succeed."',
-        '— Michael Jordan'),
+        'Michael Jordan'),
     _Quote(
         '"Push yourself again and again. Don\'t give an inch until the final buzzer sounds."',
-        '— Larry Bird'),
+        'Larry Bird'),
     _Quote(
         '"The strength of the team is each individual member. The strength of each member is the team."',
-        '— Phil Jackson'),
+        'Phil Jackson'),
     _Quote('"Be the hardest worker in the room. Every. Single. Day."',
-        '— Kobe Bryant'),
+        'Kobe Bryant'),
     _Quote('"The more you sweat in practice, the less you bleed in the game."',
-        '— Coach K'),
+        'Coach K'),
     _Quote(
         '"Great players are willing to give up their own personal glory for the good of the team."',
-        '— Kareem Abdul-Jabbar'),
+        'Kareem Abdul-Jabbar'),
     _Quote('"If you\'re afraid to fail, you\'ll never succeed."',
-        '— Charles Barkley'),
+        'Charles Barkley'),
     _Quote(
         '"I can\'t relate to lazy people. We don\'t speak the same language."',
-        '— Kobe Bryant'),
+        'Kobe Bryant'),
     _Quote(
         '"One man can be a crucial ingredient on a team, but one man cannot make a team."',
-        '— Kareem Abdul-Jabbar'),
+        'Kareem Abdul-Jabbar'),
   ];
 
   Widget _quoteOfTheDay() {
