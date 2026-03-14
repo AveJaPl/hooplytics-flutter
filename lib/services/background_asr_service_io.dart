@@ -156,37 +156,69 @@ class _AsrServiceImpl {
       return;
     }
 
-    _feedback = _AudioFeedback();
-    try {
-      await _feedback!.init();
-      _status('Dźwięki OK ✓');
-    } catch (e) {
-      _status('Dźwięki BŁĄD: $e (kontynuuję)');
-    }
+    // AudioFeedback (just_audio/ExoPlayer) is deferred until AFTER
+    // the recorder is running. ExoPlayer steals AUDIOFOCUS from
+    // AudioRecorder when initialized, muting the mic.
+    // Sounds will be lazy-loaded on first keyword detection.
 
     _asrEngine!.onKeyword = (String keyword) async {
       _status('🎤 "$keyword"');
+
+      // Emit the event FIRST (instant UI response).
       switch (keyword) {
         case 'make':
-          await _feedback?.playMake();
           onEvent(AsrEvents.shotMake, {});
           break;
         case 'swish':
-          await _feedback?.playSwish();
           onEvent(AsrEvents.shotSwish, {});
           break;
         case 'miss':
-          await _feedback?.playMiss();
           onEvent(AsrEvents.shotMiss, {});
           break;
         case 'undo':
-          await _feedback?.playUndo();
           onEvent(AsrEvents.shotUndo, {});
           break;
         case 'done':
-          await _feedback?.playEnd();
           onEvent(AsrEvents.finish, {});
           break;
+      }
+
+      // Play feedback sound. ExoPlayer will steal audio focus from
+      // the recorder, so we pause recording, play, then restart.
+      if (_feedback == null) {
+        _feedback = _AudioFeedback();
+        try {
+          await _feedback!.init();
+        } catch (e) {
+          debugPrint('[ASR] Feedback init error: $e');
+          _feedback = null;
+        }
+      }
+      if (_feedback != null) {
+        // Pause recorder to avoid AUDIOFOCUS_LOSS muting it.
+        await _asrEngine?.stop();
+        switch (keyword) {
+          case 'make':
+            await _feedback!.playMake();
+            break;
+          case 'swish':
+            await _feedback!.playSwish();
+            break;
+          case 'miss':
+            await _feedback!.playMiss();
+            break;
+          case 'undo':
+            await _feedback!.playUndo();
+            break;
+          case 'done':
+            await _feedback!.playEnd();
+            break;
+        }
+        // Restart recorder after sound finishes (unless session ended).
+        if (_running && keyword != 'done') {
+          await Future<void>.delayed(const Duration(milliseconds: 100));
+          await _asrEngine?.start();
+        }
       }
     };
 
@@ -210,6 +242,8 @@ class _AsrServiceImpl {
   }
 
   Future<void> stopListening() async {
+    debugPrint('[ASR] stopListening called from:');
+    debugPrint(StackTrace.current.toString().split('\n').take(5).join('\n'));
     await _asrEngine?.stop();
     await _audioRouter?.deactivate();
     _running = false;
@@ -217,6 +251,8 @@ class _AsrServiceImpl {
   }
 
   Future<void> shutdown() async {
+    debugPrint('[ASR] shutdown called from:');
+    debugPrint(StackTrace.current.toString().split('\n').take(5).join('\n'));
     await _asrEngine?.stop();
     await _asrEngine?.dispose();
     await _feedback?.dispose();
@@ -262,15 +298,10 @@ class AudioRouter {
         androidWillPauseWhenDucked: false,
       ));
     } else if (Platform.isAndroid) {
-      // Use speech config: appropriate for simultaneous mic recording + audio playback
-      await _session!.configure(const AudioSessionConfiguration(
-        androidAudioAttributes: AndroidAudioAttributes(
-          contentType: AndroidAudioContentType.speech,
-          usage: AndroidAudioUsage.voiceCommunication,
-        ),
-        androidAudioFocusGainType: AndroidAudioFocusGainType.gainTransientMayDuck,
-        androidWillPauseWhenDucked: false,
-      ));
+      // Intentionally skip audio session configuration on Android.
+      // AudioRecord works without audio focus, and configuring
+      // voiceCommunication/speech usage causes AUDIOFOCUS_LOSS when
+      // ExoPlayer (just_audio) initializes, which mutes the mic.
     }
   }
 
@@ -343,6 +374,9 @@ class _AsrEngine {
   bool _running = false;
   bool _vadActive = false;
   bool _processing = false;
+  final List<Uint8List> _pendingChunks = [];
+  int _chunkCount = 0;
+  int _segmentCount = 0;
 
   void Function(String keyword)? onKeyword;
   void Function(bool active)? onVadStateChange;
@@ -367,7 +401,7 @@ class _AsrEngine {
         minSilenceDuration: 0.30,
         minSpeechDuration: 0.20,
         windowSize: _kChunkSamples,
-        maxSpeechDuration: 8.0,
+        maxSpeechDuration: 30.0,
       ),
       sampleRate: _kSampleRate,
       numThreads: 1,
@@ -403,6 +437,9 @@ class _AsrEngine {
     if (_running) return;
     _running = true;
     _processing = false;
+    _chunkCount = 0;
+    _segmentCount = 0;
+    _pendingChunks.clear();
 
     _recorder = AudioRecorder();
     final stream = await _recorder!.startStream(
@@ -421,17 +458,24 @@ class _AsrEngine {
     _audioSub = stream.listen(
       _enqueueChunk,
       onError: (e) => debugPrint('[AsrEngine] Stream error: $e'),
+      onDone: () => debugPrint('[AsrEngine] ⚠️ Audio stream DONE (closed by recorder)'),
     );
   }
 
   void _enqueueChunk(Uint8List bytes) {
-    if (_processing) return;
     if (_vad == null || _spotter == null) return;
 
+    _pendingChunks.add(bytes);
+
+    if (_processing) return;
     _processing = true;
+
     Future(() {
       try {
-        _processChunk(bytes);
+        while (_pendingChunks.isNotEmpty && _running) {
+          final chunk = _pendingChunks.removeAt(0);
+          _processChunk(chunk);
+        }
       } catch (e) {
         debugPrint('[AsrEngine] chunk error: $e');
         onError?.call(e.toString());
@@ -444,7 +488,22 @@ class _AsrEngine {
   void _processChunk(Uint8List bytes) {
     if (_vad == null || _spotter == null) return;
 
+    _chunkCount++;
+    if (_chunkCount % 500 == 1) {
+      debugPrint('[AsrEngine] chunk #$_chunkCount, bytes=${bytes.length}, segments=$_segmentCount, pending=${_pendingChunks.length}');
+    }
+
     final samples = _int16ToFloat32(bytes);
+
+    // Check if audio has any signal (not all zeros)
+    if (_chunkCount % 500 == 1) {
+      double maxAmp = 0;
+      for (final s in samples) {
+        if (s.abs() > maxAmp) maxAmp = s.abs();
+      }
+      debugPrint('[AsrEngine] audio maxAmp=${maxAmp.toStringAsFixed(4)}');
+    }
+
     _vad!.acceptWaveform(samples);
 
     bool speechNow = false;
@@ -452,7 +511,9 @@ class _AsrEngine {
       final segment = _vad!.front();
       _vad!.pop();
       if (segment.samples.isEmpty) continue;
+      _segmentCount++;
       speechNow = true;
+      debugPrint('[AsrEngine] VAD segment #$_segmentCount, samples=${segment.samples.length}');
 
       final stream = _spotter!.createStream();
       stream.acceptWaveform(samples: segment.samples, sampleRate: _kSampleRate);
@@ -467,6 +528,7 @@ class _AsrEngine {
           .replaceAll(' ', '')
           .trim()
           .toLowerCase();
+      debugPrint('[AsrEngine] spotter result: "${result.keyword}" -> "$keyword"');
       if (keyword.isNotEmpty && keyword != '[unk]') {
         debugPrint('[AsrEngine] ✓ "$keyword"');
         onKeyword?.call(keyword);
@@ -483,6 +545,7 @@ class _AsrEngine {
     if (!_running) return;
     _running = false;
     _processing = false;
+    _pendingChunks.clear();
     await _audioSub?.cancel();
     _audioSub = null;
     await _recorder?.stop();
@@ -520,12 +583,15 @@ class _AudioFeedback {
   late final AudioPlayer _pMake, _pSwish, _pMiss, _pUndo, _pEnd;
   bool _ready = false;
 
+  AudioPlayer _createPlayer() =>
+      AudioPlayer(handleInterruptions: false);
+
   Future<void> init() async {
-    _pMake = AudioPlayer();
-    _pSwish = AudioPlayer();
-    _pMiss = AudioPlayer();
-    _pUndo = AudioPlayer();
-    _pEnd = AudioPlayer();
+    _pMake = _createPlayer();
+    _pSwish = _createPlayer();
+    _pMiss = _createPlayer();
+    _pUndo = _createPlayer();
+    _pEnd = _createPlayer();
 
     await Future.wait([
       _pMake.setAudioSource(AudioSource.asset('assets/sounds/hit.mp3')),
