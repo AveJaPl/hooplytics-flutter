@@ -13,12 +13,9 @@ dependencies:
   provider: ^6.1.2
   supabase_flutter: ^2.8.4
   google_sign_in: ^6.2.2
-  sherpa_onnx: any
-  just_audio: ^0.9.40
-  audio_session: ^0.1.21
-  record: ^6.2.0
+  speech_to_text: ^7.0.0
+  audioplayers: ^6.1.0
   permission_handler: ^11.3.1
-  path_provider: ^2.1.5
   wakelock_plus: ^1.2.8
   image_picker: ^1.1.2
 
@@ -38,11 +35,6 @@ flutter:
 
   assets:
     - assets/avatars/
-    - assets/models/silero_vad.onnx
-    - assets/models/kws/encoder.onnx
-    - assets/models/kws/decoder.onnx
-    - assets/models/kws/joiner.onnx
-    - assets/models/kws/tokens.txt
     - assets/sounds/hit.mp3
     - assets/sounds/swish.mp3
     - assets/sounds/miss.mp3

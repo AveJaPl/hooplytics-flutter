@@ -1,18 +1,13 @@
 // lib/services/background_asr_service_io.dart
 
 import 'dart:async';
-import 'dart:io';
 
-import 'package:audio_session/audio_session.dart';
+import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/foundation.dart';
-import 'package:flutter/services.dart';
-import 'package:just_audio/just_audio.dart';
-import 'package:path_provider/path_provider.dart';
-import 'package:record/record.dart';
-import 'package:sherpa_onnx/sherpa_onnx.dart' as sherpa;
+import 'package:speech_to_text/speech_recognition_error.dart';
+import 'package:speech_to_text/speech_recognition_result.dart';
+import 'package:speech_to_text/speech_to_text.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
-
-import 'model_extractor.dart';
 
 class AsrEvents {
   static const shotMake = 'shot_make';
@@ -25,12 +20,10 @@ class AsrEvents {
   static const error = 'error';
 }
 
-Future<void> initBackgroundService() async {
-  debugPrint('[ASR] initBackgroundService: no-op');
-}
+Future<void> initBackgroundService() async {}
 
 // ═══════════════════════════════════════════════════════════════════════════
-//  FASADA UI
+//  PUBLIC FACADE (unchanged API)
 // ═══════════════════════════════════════════════════════════════════════════
 
 class BackgroundAsrService {
@@ -63,14 +56,15 @@ class BackgroundAsrService {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-//  IMPLEMENTACJA
+//  IMPLEMENTATION
 // ═══════════════════════════════════════════════════════════════════════════
 
 class _AsrServiceImpl {
-  AudioRouter? _audioRouter;
-  _AsrEngine? _asrEngine;
+  final SpeechToText _stt = SpeechToText();
   _AudioFeedback? _feedback;
   bool _running = false;
+  bool _listening = false;
+  Timer? _restartTimer;
 
   bool get isRunning => _running;
 
@@ -85,543 +79,258 @@ class _AsrServiceImpl {
     required void Function(String, Map<String, dynamic>?) onEvent,
   }) async {
     if (_running) return;
-
-    // Upewnij sie ze poprzednia sesja jest zamknięta
-    await _asrEngine?.stop();
-    await _asrEngine?.dispose();
-    _asrEngine = null;
-
     _emit = onEvent;
 
     _status('Inicjalizacja...');
 
     try {
       await WakelockPlus.enable();
-      _status('Wakelock OK');
     } catch (e) {
       _status('Wakelock error: $e');
     }
 
-    _audioRouter = AudioRouter();
-    try {
-      await _audioRouter!.configure();
-      _status('Audio session OK');
-    } catch (e) {
-      _status('Audio session BŁĄD: $e');
-    }
-
-    _status('Kopiuję modele...');
-    Map<String, String> modelPaths;
-    try {
-      modelPaths = await ModelExtractor.extractAll();
-      _status('Modele gotowe ✓');
-    } catch (e) {
-      _status('Modele BŁĄD: $e');
-      onEvent(AsrEvents.error, {'message': 'Model extraction failed: $e'});
-      return;
-    }
-
-    String keywordsPath;
-    try {
-      final dir = await getApplicationSupportDirectory();
-      keywordsPath = '${dir.path}/kws_keywords.txt';
-      // Keywords must use space-separated BPE tokens from tokens.txt.
-      // ▁MAKE is a single token; others are spelled with per-character tokens.
-      // ▁ prefix = word-start boundary (e.g. ▁S = word-initial S).
-      await File(keywordsPath).writeAsString(
-        '▁MAKE @1.5\n▁S W I S H @1.5\n▁MI S S @1.5\n▁UN D O @1.5\n▁DON E @1.5\n',
-      );
-      _status('Keywords OK');
-    } catch (e) {
-      _status('Keywords BŁĄD: $e');
-      onEvent(AsrEvents.error, {'message': 'Keywords file failed: $e'});
-      return;
-    }
-
-    _asrEngine = _AsrEngine(
-      vadModelPath: modelPaths['silero_vad.onnx']!,
-      encoderPath: modelPaths['kws_encoder.onnx']!,
-      decoderPath: modelPaths['kws_decoder.onnx']!,
-      joinerPath: modelPaths['kws_joiner.onnx']!,
-      tokensPath: modelPaths['kws_tokens.txt']!,
-      keywordsFilePath: keywordsPath,
+    final available = await _stt.initialize(
+      onStatus: _onSttStatus,
+      onError: _onSttError,
+      debugLogging: true,
     );
 
-    try {
-      await _asrEngine!.init();
-      _status('ASR Engine OK ✓');
-    } catch (e) {
-      _status('ASR init BŁĄD: $e');
-      onEvent(AsrEvents.error, {'message': 'ASR init failed: $e'});
+    if (!available) {
+      _status('Speech recognition niedostępne');
+      onEvent(AsrEvents.error, {'message': 'Speech recognition unavailable'});
       return;
     }
 
-    // AudioFeedback (just_audio/ExoPlayer) is deferred until AFTER
-    // the recorder is running. ExoPlayer steals AUDIOFOCUS from
-    // AudioRecorder when initialized, muting the mic.
-    // Sounds will be lazy-loaded on first keyword detection.
+    _status('STT zainicjalizowane');
 
-    _asrEngine!.onKeyword = (String keyword) async {
-      _status('🎤 "$keyword"');
+    // Init audio feedback (audioplayers / SoundPool — no audio focus conflict)
+    _feedback = _AudioFeedback();
+    try {
+      await _feedback!.init();
+      _status('Audio feedback OK');
+    } catch (e) {
+      debugPrint('[ASR] Feedback init error: $e');
+      _feedback = null;
+    }
 
-      // Emit the event FIRST (instant UI response).
-      switch (keyword) {
-        case 'make':
-          onEvent(AsrEvents.shotMake, {});
-          break;
-        case 'swish':
-          onEvent(AsrEvents.shotSwish, {});
-          break;
-        case 'miss':
-          onEvent(AsrEvents.shotMiss, {});
-          break;
-        case 'undo':
-          onEvent(AsrEvents.shotUndo, {});
-          break;
-        case 'done':
-          onEvent(AsrEvents.finish, {});
-          break;
-      }
+    _running = true;
+    await _startListening();
+  }
 
-      // Play feedback sound. ExoPlayer will steal audio focus from
-      // the recorder, so we pause recording, play, then restart.
-      if (_feedback == null) {
-        _feedback = _AudioFeedback();
-        try {
-          await _feedback!.init();
-        } catch (e) {
-          debugPrint('[ASR] Feedback init error: $e');
-          _feedback = null;
-        }
-      }
-      if (_feedback != null) {
-        // Pause recorder to avoid AUDIOFOCUS_LOSS muting it.
-        await _asrEngine?.stop();
-        switch (keyword) {
-          case 'make':
-            await _feedback!.playMake();
-            break;
-          case 'swish':
-            await _feedback!.playSwish();
-            break;
-          case 'miss':
-            await _feedback!.playMiss();
-            break;
-          case 'undo':
-            await _feedback!.playUndo();
-            break;
-          case 'done':
-            await _feedback!.playEnd();
-            break;
-        }
-        // Restart recorder after sound finishes (unless session ended).
-        if (_running && keyword != 'done') {
-          await Future<void>.delayed(const Duration(milliseconds: 100));
-          await _asrEngine?.start();
-        }
-      }
-    };
-
-    _asrEngine!.onVadStateChange = (bool active) {
-      onEvent(AsrEvents.voiceState, {'active': active});
-    };
-
-    _asrEngine!.onError = (String msg) {
-      _status('❌ $msg');
-    };
+  Future<void> _startListening() async {
+    if (!_running || _listening) return;
 
     try {
-      await _audioRouter!.activateForRecording();
-      await _asrEngine!.start();
-      _running = true;
-      _status('Nasłuchuję ✓');
+      _listening = true;
+      _emit?.call(AsrEvents.voiceState, {'active': true});
+
+      // ignore: deprecated_member_use
+      await _stt.listen(
+        onResult: _onSttResult,
+        listenMode: ListenMode.dictation,
+        cancelOnError: false,
+        partialResults: true,
+        listenFor: const Duration(seconds: 30),
+        pauseFor: const Duration(seconds: 3),
+      );
+
+      _status('Nasłuchuję...');
     } catch (e) {
-      _status('Start BŁĄD: $e');
-      onEvent(AsrEvents.error, {'message': 'Start failed: $e'});
+      _listening = false;
+      _status('Listen error: $e');
+      _scheduleRestart();
     }
   }
 
+  void _onSttResult(SpeechRecognitionResult result) {
+    if (!_running) return;
+
+    final text = result.recognizedWords.toLowerCase().trim();
+    if (text.isEmpty) return;
+
+    debugPrint('[ASR] result: "$text" final=${result.finalResult}');
+
+    // Only process final results to avoid duplicate triggers
+    if (!result.finalResult) return;
+
+    _matchKeywords(text);
+  }
+
+  void _matchKeywords(String text) {
+    // Split into words and check each one.
+    // Process only the LAST keyword found to avoid duplicates
+    // from partial → final result overlap.
+    final words = text.split(RegExp(r'\s+'));
+
+    String? lastKeyword;
+    for (final word in words) {
+      final matched = _matchWord(word);
+      if (matched != null) lastKeyword = matched;
+    }
+
+    if (lastKeyword != null) {
+      _handleKeyword(lastKeyword);
+    }
+  }
+
+  String? _matchWord(String word) {
+    // Support English and Polish keywords
+    switch (word) {
+      case 'make':
+      case 'made':
+      case 'mak':
+      case 'trafiony':
+      case 'trafienie':
+        return 'make';
+      case 'swish':
+      case 'świszcz':
+        return 'swish';
+      case 'miss':
+      case 'missed':
+      case 'mis':
+      case 'pudło':
+      case 'pudlo':
+        return 'miss';
+      case 'undo':
+      case 'cofnij':
+        return 'undo';
+      case 'done':
+      case 'finish':
+      case 'stop':
+      case 'koniec':
+        return 'done';
+      default:
+        return null;
+    }
+  }
+
+  Future<void> _handleKeyword(String keyword) async {
+    _status('Keyword: "$keyword"');
+
+    switch (keyword) {
+      case 'make':
+        _emit?.call(AsrEvents.shotMake, {});
+        break;
+      case 'swish':
+        _emit?.call(AsrEvents.shotSwish, {});
+        break;
+      case 'miss':
+        _emit?.call(AsrEvents.shotMiss, {});
+        break;
+      case 'undo':
+        _emit?.call(AsrEvents.shotUndo, {});
+        break;
+      case 'done':
+        _emit?.call(AsrEvents.finish, {});
+        break;
+    }
+
+    // Play feedback sound
+    await _feedback?.play(keyword);
+  }
+
+  void _onSttStatus(String status) {
+    debugPrint('[ASR] STT status: $status');
+
+    if (status == 'notListening' || status == 'done') {
+      _listening = false;
+      _emit?.call(AsrEvents.voiceState, {'active': false});
+
+      // Auto-restart listening after a short delay
+      if (_running) {
+        _scheduleRestart();
+      }
+    }
+  }
+
+  void _onSttError(SpeechRecognitionError error) {
+    debugPrint('[ASR] STT error: ${error.errorMsg} permanent=${error.permanent}');
+    _listening = false;
+
+    if (error.permanent) {
+      _status('Błąd STT: ${error.errorMsg}');
+      _emit?.call(AsrEvents.error, {'message': error.errorMsg});
+    }
+
+    // Restart even after non-permanent errors
+    if (_running) {
+      _scheduleRestart();
+    }
+  }
+
+  void _scheduleRestart() {
+    _restartTimer?.cancel();
+    _restartTimer = Timer(const Duration(milliseconds: 300), () {
+      if (_running && !_listening) {
+        _startListening();
+      }
+    });
+  }
+
   Future<void> stopListening() async {
-    debugPrint('[ASR] stopListening called from:');
-    debugPrint(StackTrace.current.toString().split('\n').take(5).join('\n'));
-    await _asrEngine?.stop();
-    await _audioRouter?.deactivate();
+    _restartTimer?.cancel();
     _running = false;
+    _listening = false;
+    await _stt.stop();
+    _emit?.call(AsrEvents.voiceState, {'active': false});
     _status('Zatrzymano');
   }
 
   Future<void> shutdown() async {
-    debugPrint('[ASR] shutdown called from:');
-    debugPrint(StackTrace.current.toString().split('\n').take(5).join('\n'));
-    await _asrEngine?.stop();
-    await _asrEngine?.dispose();
+    _restartTimer?.cancel();
+    _running = false;
+    _listening = false;
+    await _stt.stop();
+    await _stt.cancel();
     await _feedback?.dispose();
-    await _audioRouter?.deactivate();
+    _feedback = null;
     try {
       await WakelockPlus.disable();
     } catch (_) {}
-    _asrEngine = null;
-    _feedback = null;
-    _audioRouter = null;
-    _running = false;
     _emit = null;
   }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-//  AUDIO ROUTER
-// ═══════════════════════════════════════════════════════════════════════════
-
-class AudioRouter {
-  AudioSession? _session;
-
-  Future<void> configure() async {
-    _session = await AudioSession.instance;
-    if (Platform.isIOS) {
-      await _session!.configure(AudioSessionConfiguration(
-        avAudioSessionCategory: AVAudioSessionCategory.playAndRecord,
-        avAudioSessionCategoryOptions:
-            AVAudioSessionCategoryOptions.allowBluetooth |
-                AVAudioSessionCategoryOptions.defaultToSpeaker |
-                AVAudioSessionCategoryOptions.duckOthers,
-        avAudioSessionMode: AVAudioSessionMode.spokenAudio,
-        avAudioSessionRouteSharingPolicy:
-            AVAudioSessionRouteSharingPolicy.defaultPolicy,
-        avAudioSessionSetActiveOptions: AVAudioSessionSetActiveOptions.none,
-        androidAudioAttributes: const AndroidAudioAttributes(
-          contentType: AndroidAudioContentType.sonification,
-          flags: AndroidAudioFlags.audibilityEnforced,
-          usage: AndroidAudioUsage.assistanceSonification,
-        ),
-        androidAudioFocusGainType:
-            AndroidAudioFocusGainType.gainTransientMayDuck,
-        androidWillPauseWhenDucked: false,
-      ));
-    } else if (Platform.isAndroid) {
-      // Intentionally skip audio session configuration on Android.
-      // AudioRecord works without audio focus, and configuring
-      // voiceCommunication/speech usage causes AUDIOFOCUS_LOSS when
-      // ExoPlayer (just_audio) initializes, which mutes the mic.
-    }
-  }
-
-  Future<void> activateForRecording() async {
-    if (_session == null) return;
-    // iOS requires explicit AVAudioSession activation.
-    // Android AudioRecord does NOT need audio focus — skipping setActive()
-    // prevents AUDIOFOCUS_LOSS conflicts with just_audio's ExoPlayer.
-    if (Platform.isIOS) await _session!.setActive(true);
-    if (Platform.isAndroid) await _activateAndroidBluetooth();
-  }
-
-  Future<void> deactivate() async {
-    if (_session == null) return;
-    if (Platform.isAndroid) await _deactivateAndroidBluetooth();
-    if (Platform.isIOS) await _session!.setActive(false);
-  }
-
-  static const _btChannel = MethodChannel('com.yourapp/bluetooth_sco');
-  bool _scoActive = false;
-
-  Future<void> _activateAndroidBluetooth() async {
-    try {
-      final hasSco =
-          await _btChannel.invokeMethod<bool>('hasScoDevice') ?? false;
-      if (hasSco) {
-        await _btChannel.invokeMethod('startSco');
-        _scoActive = true;
-      } else {
-        await _btChannel.invokeMethod('setSpeakerphoneOn', true);
-      }
-    } catch (e) {
-      // MissingPluginException or PlatformException — BT SCO not available,
-      // continue without it (microphone still works via built-in speaker).
-      debugPrint('[AudioRouter] BT SCO unavailable, skipping: $e');
-    }
-  }
-
-  Future<void> _deactivateAndroidBluetooth() async {
-    if (!_scoActive) return;
-    try {
-      await _btChannel.invokeMethod('stopSco');
-      _scoActive = false;
-    } catch (e) {
-      debugPrint('[AudioRouter] stopSco error: $e');
-    }
-  }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-//  ASR ENGINE
-// ═══════════════════════════════════════════════════════════════════════════
-
-class _AsrEngine {
-  final String vadModelPath;
-  final String encoderPath;
-  final String decoderPath;
-  final String joinerPath;
-  final String tokensPath;
-  final String keywordsFilePath;
-
-  static const int _kSampleRate = 16000;
-  static const int _kChunkSamples = 512;
-
-  sherpa.VoiceActivityDetector? _vad;
-  sherpa.KeywordSpotter? _spotter;
-  AudioRecorder? _recorder;
-  StreamSubscription<Uint8List>? _audioSub;
-
-  bool _running = false;
-  bool _vadActive = false;
-  bool _processing = false;
-  final List<Uint8List> _pendingChunks = [];
-  int _chunkCount = 0;
-  int _segmentCount = 0;
-
-  void Function(String keyword)? onKeyword;
-  void Function(bool active)? onVadStateChange;
-  void Function(String msg)? onError;
-
-  _AsrEngine({
-    required this.vadModelPath,
-    required this.encoderPath,
-    required this.decoderPath,
-    required this.joinerPath,
-    required this.tokensPath,
-    required this.keywordsFilePath,
-  });
-
-  Future<void> init() async {
-    debugPrint('[AsrEngine] Init VAD: $vadModelPath');
-
-    final vadConfig = sherpa.VadModelConfig(
-      sileroVad: sherpa.SileroVadModelConfig(
-        model: vadModelPath,
-        threshold: 0.45,
-        minSilenceDuration: 0.30,
-        minSpeechDuration: 0.20,
-        windowSize: _kChunkSamples,
-        maxSpeechDuration: 30.0,
-      ),
-      sampleRate: _kSampleRate,
-      numThreads: 1,
-      debug: false,
-    );
-
-    _vad = sherpa.VoiceActivityDetector(
-      config: vadConfig,
-      bufferSizeInSeconds: 30,
-    );
-    debugPrint('[AsrEngine] VAD OK');
-
-    final spotterConfig = sherpa.KeywordSpotterConfig(
-      model: sherpa.OnlineModelConfig(
-        transducer: sherpa.OnlineTransducerModelConfig(
-          encoder: encoderPath,
-          decoder: decoderPath,
-          joiner: joinerPath,
-        ),
-        tokens: tokensPath,
-        numThreads: 2,
-        debug: false,
-      ),
-      keywordsFile: keywordsFilePath,
-    );
-
-    debugPrint('[AsrEngine] Tworzę KeywordSpotter...');
-    _spotter = sherpa.KeywordSpotter(spotterConfig);
-    debugPrint('[AsrEngine] KeywordSpotter OK');
-  }
-
-  Future<void> start() async {
-    if (_running) return;
-    _running = true;
-    _processing = false;
-    _chunkCount = 0;
-    _segmentCount = 0;
-    _pendingChunks.clear();
-
-    _recorder = AudioRecorder();
-    final stream = await _recorder!.startStream(
-      const RecordConfig(
-        encoder: AudioEncoder.pcm16bits,
-        sampleRate: _kSampleRate,
-        numChannels: 1,
-        // autoGain/echoCancel/noiseSuppress require hardware audio processing
-        // that is unavailable on many emulators and some devices — keep off.
-        autoGain: false,
-        echoCancel: false,
-        noiseSuppress: false,
-      ),
-    );
-
-    _audioSub = stream.listen(
-      _enqueueChunk,
-      onError: (e) => debugPrint('[AsrEngine] Stream error: $e'),
-      onDone: () => debugPrint('[AsrEngine] ⚠️ Audio stream DONE (closed by recorder)'),
-    );
-  }
-
-  void _enqueueChunk(Uint8List bytes) {
-    if (_vad == null || _spotter == null) return;
-
-    _pendingChunks.add(bytes);
-
-    if (_processing) return;
-    _processing = true;
-
-    Future(() {
-      try {
-        while (_pendingChunks.isNotEmpty && _running) {
-          final chunk = _pendingChunks.removeAt(0);
-          _processChunk(chunk);
-        }
-      } catch (e) {
-        debugPrint('[AsrEngine] chunk error: $e');
-        onError?.call(e.toString());
-      } finally {
-        _processing = false;
-      }
-    });
-  }
-
-  void _processChunk(Uint8List bytes) {
-    if (_vad == null || _spotter == null) return;
-
-    _chunkCount++;
-    if (_chunkCount % 500 == 1) {
-      debugPrint('[AsrEngine] chunk #$_chunkCount, bytes=${bytes.length}, segments=$_segmentCount, pending=${_pendingChunks.length}');
-    }
-
-    final samples = _int16ToFloat32(bytes);
-
-    // Check if audio has any signal (not all zeros)
-    if (_chunkCount % 500 == 1) {
-      double maxAmp = 0;
-      for (final s in samples) {
-        if (s.abs() > maxAmp) maxAmp = s.abs();
-      }
-      debugPrint('[AsrEngine] audio maxAmp=${maxAmp.toStringAsFixed(4)}');
-    }
-
-    _vad!.acceptWaveform(samples);
-
-    bool speechNow = false;
-    while (!_vad!.isEmpty()) {
-      final segment = _vad!.front();
-      _vad!.pop();
-      if (segment.samples.isEmpty) continue;
-      _segmentCount++;
-      speechNow = true;
-      debugPrint('[AsrEngine] VAD segment #$_segmentCount, samples=${segment.samples.length}');
-
-      final stream = _spotter!.createStream();
-      stream.acceptWaveform(samples: segment.samples, sampleRate: _kSampleRate);
-      _spotter!.decode(stream);
-      final result = _spotter!.getResult(stream);
-      stream.free();
-
-      // Strip BPE word-boundary markers (▁) and inter-token spaces,
-      // then trim and lowercase so switch cases like 'make' always match.
-      final keyword = result.keyword
-          .replaceAll('▁', '')
-          .replaceAll(' ', '')
-          .trim()
-          .toLowerCase();
-      debugPrint('[AsrEngine] spotter result: "${result.keyword}" -> "$keyword"');
-      if (keyword.isNotEmpty && keyword != '[unk]') {
-        debugPrint('[AsrEngine] ✓ "$keyword"');
-        onKeyword?.call(keyword);
-      }
-    }
-
-    if (speechNow != _vadActive) {
-      _vadActive = speechNow;
-      onVadStateChange?.call(_vadActive);
-    }
-  }
-
-  Future<void> stop() async {
-    if (!_running) return;
-    _running = false;
-    _processing = false;
-    _pendingChunks.clear();
-    await _audioSub?.cancel();
-    _audioSub = null;
-    await _recorder?.stop();
-    _recorder?.dispose();
-    _recorder = null;
-    if (_vadActive) {
-      _vadActive = false;
-      onVadStateChange?.call(false);
-    }
-  }
-
-  Future<void> dispose() async {
-    await stop();
-    _vad?.free();
-    _spotter?.free();
-    _vad = null;
-    _spotter = null;
-  }
-
-  static Float32List _int16ToFloat32(Uint8List bytes) {
-    final out = Float32List(bytes.length ~/ 2);
-    final bd = bytes.buffer.asByteData();
-    for (int i = 0; i < out.length; i++) {
-      out[i] = bd.getInt16(i * 2, Endian.little) / 32768.0;
-    }
-    return out;
-  }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-//  AUDIO FEEDBACK
+//  AUDIO FEEDBACK (audioplayers — uses SoundPool on Android, no focus theft)
 // ═══════════════════════════════════════════════════════════════════════════
 
 class _AudioFeedback {
-  late final AudioPlayer _pMake, _pSwish, _pMiss, _pUndo, _pEnd;
-  bool _ready = false;
+  final _players = <String, AudioPlayer>{};
 
-  AudioPlayer _createPlayer() =>
-      AudioPlayer(handleInterruptions: false);
+  static const _soundMap = {
+    'make': 'assets/sounds/hit.mp3',
+    'swish': 'assets/sounds/swish.mp3',
+    'miss': 'assets/sounds/miss.mp3',
+    'undo': 'assets/sounds/undo.mp3',
+    'done': 'assets/sounds/end.mp3',
+  };
 
   Future<void> init() async {
-    _pMake = _createPlayer();
-    _pSwish = _createPlayer();
-    _pMiss = _createPlayer();
-    _pUndo = _createPlayer();
-    _pEnd = _createPlayer();
-
-    await Future.wait([
-      _pMake.setAudioSource(AudioSource.asset('assets/sounds/hit.mp3')),
-      _pSwish.setAudioSource(AudioSource.asset('assets/sounds/swish.mp3')),
-      _pMiss.setAudioSource(AudioSource.asset('assets/sounds/miss.mp3')),
-      _pUndo.setAudioSource(AudioSource.asset('assets/sounds/undo.mp3')),
-      _pEnd.setAudioSource(AudioSource.asset('assets/sounds/end.mp3')),
-    ]);
-    _ready = true;
-  }
-
-  Future<void> _play(AudioPlayer p) async {
-    if (!_ready) return;
-    try {
-      await p.seek(Duration.zero);
-      await p.play();
-    } catch (e) {
-      debugPrint('Audio: $e');
+    for (final entry in _soundMap.entries) {
+      final player = AudioPlayer();
+      // Set low-latency mode for immediate feedback
+      await player.setPlayerMode(PlayerMode.lowLatency);
+      await player.setSource(AssetSource(entry.value.replaceFirst('assets/', '')));
+      _players[entry.key] = player;
     }
   }
 
-  Future<void> playMake() => _play(_pMake);
-  Future<void> playSwish() => _play(_pSwish);
-  Future<void> playMiss() => _play(_pMiss);
-  Future<void> playUndo() => _play(_pUndo);
-  Future<void> playEnd() => _play(_pEnd);
+  Future<void> play(String keyword) async {
+    final player = _players[keyword];
+    if (player == null) return;
+    try {
+      await player.stop();
+      await player.resume();
+    } catch (e) {
+      debugPrint('[AudioFeedback] play error: $e');
+    }
+  }
 
   Future<void> dispose() async {
-    for (final p in [_pMake, _pSwish, _pMiss, _pUndo, _pEnd]) {
-      await p.dispose();
+    for (final player in _players.values) {
+      await player.dispose();
     }
+    _players.clear();
   }
 }
